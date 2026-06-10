@@ -19,6 +19,7 @@ def init_db() -> None:
             "  created_at TEXT NOT NULL"
             ")"
         )
+        _ensure_column(cur, "sessions", "user_id", "INTEGER")
         _ensure_column(cur, "sessions", "last_source_delimiter", "TEXT")
         cur.execute(
             "CREATE TABLE IF NOT EXISTS chat_messages ("
@@ -560,12 +561,23 @@ def _conn():
         conn.close()
 
 
-def ensure_session(session_id: str, created_at: str) -> None:
+def ensure_session(session_id: str, created_at: str, user_id: int | None = None) -> bool:
+    """Create a chat session or verify that the current user owns it."""
     with _conn() as cur:
         cur.execute(
-            "INSERT OR IGNORE INTO sessions (session_id, created_at) VALUES (?, ?)",
-            (session_id, created_at),
+            "INSERT OR IGNORE INTO sessions (session_id, created_at, user_id) VALUES (?, ?, ?)",
+            (session_id, created_at, user_id),
         )
+        cur.execute("SELECT user_id FROM sessions WHERE session_id = ?", (session_id,))
+        row = cur.fetchone()
+        owner_id = row[0] if row else None
+        if owner_id is None and user_id is not None:
+            cur.execute(
+                "UPDATE sessions SET user_id = ? WHERE session_id = ? AND user_id IS NULL",
+                (user_id, session_id),
+            )
+            return True
+        return user_id is None or owner_id == user_id
 
 
 def get_session_source(session_id: str) -> str | None:
@@ -618,18 +630,27 @@ def get_recent_messages(session_id: str, limit: int = 4) -> list[tuple[str, str]
 
 # ---- 대화 이력 ----
 
-def list_conversations(limit: int = 100) -> list[dict]:
+def list_conversations(limit: int = 100, user_id: int | None = None) -> list[dict]:
     """
     메시지가 있는 세션을 최근 활동순으로 모은다.
     각 항목: {session_id, title(첫 사용자 질문), count, last_at}
     """
     with _conn() as cur:
-        cur.execute(
-            "SELECT session_id, COUNT(*) AS cnt, MAX(created_at) AS last_at, MAX(id) AS max_id "
-            "FROM chat_messages GROUP BY session_id "
-            "ORDER BY max_id DESC LIMIT ?",
-            (limit,),
-        )
+        if user_id is None:
+            cur.execute(
+                "SELECT session_id, COUNT(*) AS cnt, MAX(created_at) AS last_at, MAX(id) AS max_id "
+                "FROM chat_messages GROUP BY session_id "
+                "ORDER BY max_id DESC LIMIT ?",
+                (limit,),
+            )
+        else:
+            cur.execute(
+                "SELECT m.session_id, COUNT(*) AS cnt, MAX(m.created_at) AS last_at, MAX(m.id) AS max_id "
+                "FROM chat_messages m JOIN sessions s ON s.session_id = m.session_id "
+                "WHERE s.user_id = ? GROUP BY m.session_id "
+                "ORDER BY max_id DESC LIMIT ?",
+                (user_id, limit),
+            )
         rows = cur.fetchall()
         convs = []
         for sid, cnt, last_at, _max_id in rows:
@@ -649,14 +670,23 @@ def list_conversations(limit: int = 100) -> list[dict]:
     return convs
 
 
-def get_conversation(session_id: str, limit: int = 500) -> list[dict]:
+def get_conversation(session_id: str, limit: int = 500,
+                     user_id: int | None = None) -> list[dict]:
     """한 세션의 메시지를 시간순으로 반환."""
     with _conn() as cur:
-        cur.execute(
-            "SELECT role, content, selected_files, created_at FROM chat_messages "
-            "WHERE session_id = ? ORDER BY id ASC LIMIT ?",
-            (session_id, limit),
-        )
+        if user_id is None:
+            cur.execute(
+                "SELECT role, content, selected_files, created_at FROM chat_messages "
+                "WHERE session_id = ? ORDER BY id ASC LIMIT ?",
+                (session_id, limit),
+            )
+        else:
+            cur.execute(
+                "SELECT m.role, m.content, m.selected_files, m.created_at FROM chat_messages m "
+                "JOIN sessions s ON s.session_id = m.session_id "
+                "WHERE m.session_id = ? AND s.user_id = ? ORDER BY m.id ASC LIMIT ?",
+                (session_id, user_id, limit),
+            )
         rows = cur.fetchall()
     return [
         {"role": r[0], "content": r[1],
@@ -665,24 +695,43 @@ def get_conversation(session_id: str, limit: int = 500) -> list[dict]:
     ]
 
 
-def delete_conversation(session_id: str) -> bool:
+def delete_conversation(session_id: str, user_id: int | None = None) -> bool:
     """세션과 그 메시지를 모두 삭제."""
     with _conn() as cur:
-        cur.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
+        if user_id is None:
+            cur.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
+        else:
+            cur.execute(
+                "DELETE FROM chat_messages WHERE session_id = ? AND EXISTS ("
+                "  SELECT 1 FROM sessions WHERE sessions.session_id = chat_messages.session_id "
+                "  AND sessions.user_id = ?"
+                ")",
+                (session_id, user_id),
+            )
         deleted = cur.rowcount
-        cur.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+        if user_id is None:
+            cur.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+        else:
+            cur.execute("DELETE FROM sessions WHERE session_id = ? AND user_id = ?", (session_id, user_id))
     return deleted > 0
 
 
 # ---- 피드백(F-3) ----
 
-def message_exists(message_id: int) -> bool:
+def message_exists(message_id: int, user_id: int | None = None) -> bool:
     """주어진 id의 assistant 메시지가 실재하는지(임의 id 차단용)."""
     with _conn() as cur:
-        cur.execute(
-            "SELECT 1 FROM chat_messages WHERE id = ? AND role = 'assistant'",
-            (message_id,),
-        )
+        if user_id is None:
+            cur.execute(
+                "SELECT 1 FROM chat_messages WHERE id = ? AND role = 'assistant'",
+                (message_id,),
+            )
+        else:
+            cur.execute(
+                "SELECT 1 FROM chat_messages m JOIN sessions s ON s.session_id = m.session_id "
+                "WHERE m.id = ? AND m.role = 'assistant' AND s.user_id = ?",
+                (message_id, user_id),
+            )
         return cur.fetchone() is not None
 
 

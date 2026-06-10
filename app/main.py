@@ -232,7 +232,7 @@ async def _parse_ask_request(request: Request) -> dict:
     반환: {question, session_id, source_id, dev_view, now}
     """
     require_app_token(request)  # 실패 시 PermissionError(CSRF_BLOCKED)
-    require_user(request)       # 실패 시 PermissionError(AUTH_REQUIRED)
+    user = require_user(request)       # 실패 시 PermissionError(AUTH_REQUIRED)
     try:
         payload = await request.json()
     except Exception:
@@ -248,10 +248,12 @@ async def _parse_ask_request(request: Request) -> dict:
         session_id = uuid.uuid4().hex
 
     now = _now_iso()
-    ensure_session(session_id, now)
+    if not ensure_session(session_id, now, user["user_id"]):
+        raise PermissionError("FORBIDDEN")
     return {
         "question": question, "session_id": session_id,
         "source_id": source_id, "dev_view": dev_view, "now": now,
+        "user_id": user["user_id"],
     }
 
 
@@ -672,7 +674,7 @@ def _clean_linked_ids(raw, valid_ids: set, exclude_id=None) -> list[int]:
 async def api_list_sources(request: Request):
     # 채팅 드롭다운 구성에 필요하므로 로그인 사용자라면 누구나 조회 가능(관리는 별개).
     try:
-        require_user(request)
+        user = require_user(request)
     except PermissionError as e:
         return _auth_error_response(str(e))
     rows = await run_in_threadpool(list_sources, False)
@@ -794,10 +796,10 @@ async def api_delete_source(request: Request):
 async def api_history_list(request: Request):
     """대화 이력 목록(최근순) — 로그인 필요."""
     try:
-        require_user(request)
+        user = require_user(request)
     except PermissionError as e:
         return _auth_error_response(str(e))
-    rows = await run_in_threadpool(list_conversations, 100)
+    rows = await run_in_threadpool(list_conversations, 100, user["user_id"])
     return JSONResponse(content={"conversations": rows})
 
 
@@ -805,12 +807,12 @@ async def api_history_list(request: Request):
 async def api_history_get(request: Request, session_id: str):
     """한 대화의 메시지 전체 — 로그인 필요."""
     try:
-        require_user(request)
+        user = require_user(request)
     except PermissionError as e:
         return _auth_error_response(str(e))
     if not isinstance(session_id, str) or not session_id.strip():
         return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
-    msgs = await run_in_threadpool(get_conversation, session_id, 500)
+    msgs = await run_in_threadpool(get_conversation, session_id, 500, user["user_id"])
     return JSONResponse(content={"session_id": session_id, "messages": msgs})
 
 
@@ -818,7 +820,7 @@ async def api_history_get(request: Request, session_id: str):
 async def api_history_delete(request: Request):
     try:
         require_app_token(request)
-        require_user(request)
+        user = require_user(request)
     except PermissionError as e:
         return _auth_error_response(str(e))
     try:
@@ -828,7 +830,7 @@ async def api_history_delete(request: Request):
     sid = payload.get("session_id") if isinstance(payload, dict) else None
     if not isinstance(sid, str) or not sid.strip():
         return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
-    await run_in_threadpool(delete_conversation, sid)
+    await run_in_threadpool(delete_conversation, sid, user["user_id"])
     return JSONResponse(content={"ok": True})
 
 
@@ -854,7 +856,7 @@ async def ask(request: Request):
     try:
         result = await run_in_threadpool(
             handle_ask, question, session_id, now,
-            params["source_id"], params["dev_view"],
+            params["source_id"], params["dev_view"], params["user_id"],
         )
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": error_message(str(e))})
@@ -933,7 +935,8 @@ async def ask_stream(request: Request):
             message_id = None
             try:
                 message_id = persist_ask(session_id, prep["question"], answer, [],
-                                         now, 0, prep["category"], prep.get("delimiter"))
+                                         now, 0, prep["category"], prep.get("delimiter"),
+                                         user_id=params["user_id"])
             except Exception:
                 pass
             yield _sse("done", {
@@ -984,7 +987,7 @@ async def ask_stream(request: Request):
         try:
             message_id = persist_ask(session_id, prep["question"], answer, prep["files"],
                                      now, elapsed_ms, prep["category"], prep["delimiter"],
-                                     usage=usage)
+                                     usage=usage, user_id=params["user_id"])
         except Exception:
             pass
         yield _sse("done", {
@@ -1006,7 +1009,7 @@ async def ask_cancel(request: Request):
     """Esc(중지) 요청: 해당 stream_id의 CLI 프로세스 트리를 즉시 종료한다."""
     try:
         require_app_token(request)
-        require_user(request)
+        user = require_user(request)
     except PermissionError as e:
         return _auth_error_response(str(e))
     try:
@@ -1026,7 +1029,7 @@ async def feedback(request: Request):
     """답변 피드백 수집(F-3). 코멘트는 저장 전용 — 어떤 프롬프트로도 되먹이지 않는다."""
     try:
         require_app_token(request)
-        require_user(request)
+        user = require_user(request)
     except PermissionError as e:
         return _auth_error_response(str(e))
     try:
@@ -1050,7 +1053,7 @@ async def feedback(request: Request):
         comment = comment or None
 
     # 실재하는 assistant 메시지에만 기록(임의 id 차단).
-    if not await run_in_threadpool(message_exists, message_id):
+    if not await run_in_threadpool(message_exists, message_id, user["user_id"]):
         return JSONResponse(status_code=400, content={"error": "존재하지 않는 메시지입니다."})
 
     await run_in_threadpool(save_feedback, message_id, rating, comment, _now_iso())

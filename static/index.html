@@ -444,8 +444,8 @@
   <div id="log">
     <div class="empty" id="empty">
       <h2>무엇이든 물어보세요</h2>
-      <div>질문할 폴더는 입력창 오른쪽 드롭다운에서 선택합니다.<br/>
-      폴더와 분기는 <a href="/sources" style="color:var(--accent)">＋ 폴더 등록</a>에서 관리할 수 있습니다.</div>
+      <div>질문할 폴더는 입력창 오른쪽 드롭다운에서 선택합니다.</div>
+
       <div class="examples">
         <div class="example">수강신청 정원 초과는 어느 테이블에서 처리하나요?</div>
         <div class="example">성적 확정 후 정정은 어떻게 처리해야 하나요?</div>
@@ -475,6 +475,8 @@
   <script>
     const APP_TOKEN = "__APP_TOKEN__";
     let sessionId = null;
+    let currentUsername = "";
+    const sessionStorageKey = () => currentUsername ? ("sessionId:" + currentUsername) : "sessionId";
     let controller = null;     // 진행 중 요청의 AbortController
     let streaming = false;
     let currentStreamId = null; // 진행 중 스트림의 취소 id
@@ -768,7 +770,7 @@
           if (d.needs_source) {
             if (d.session_id) {
               sessionId = d.session_id;
-              try { localStorage.setItem("sessionId", sessionId); } catch (_) {}
+              try { localStorage.setItem(sessionStorageKey(), sessionId); } catch (_) {}
             }
             renderNeedsSource(a.bubble, question, d.sources || []);
             return;
@@ -807,7 +809,7 @@
             } else if (ev.event === "done") {
               if (ev.data.session_id) {
                 sessionId = ev.data.session_id;
-                try { localStorage.setItem("sessionId", sessionId); } catch (_) {}
+                try { localStorage.setItem(sessionStorageKey(), sessionId); } catch (_) {}
               }
               doneMessageId = ev.data.message_id || null;
               doneSources = ev.data.sources || [];
@@ -883,6 +885,7 @@
         const res = await fetch("/api/me");
         if (!res.ok) { window.location.href = "/login"; return; }
         const me = await res.json();
+        currentUsername = me.username || "";
         const isAdmin = me.role === "admin";
         document.getElementById("userInfo").textContent =
           me.username + (isAdmin ? " (관리자)" : " (사용자)");
@@ -893,6 +896,7 @@
     }
     document.getElementById("logoutBtn").addEventListener("click", async () => {
       try {
+        localStorage.removeItem(sessionStorageKey());
         await fetch("/api/logout", {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-App-Token": APP_TOKEN },
@@ -901,9 +905,6 @@
       } catch (_) {}
       window.location.href = "/login";
     });
-
-    loadMe();
-    loadSources();
 
     // 예시 클릭
     document.querySelectorAll(".example").forEach(el => {
@@ -973,7 +974,7 @@
       try {
         const n = await renderConversation(sid);
         sessionId = sid;
-        try { localStorage.setItem("sessionId", sid); } catch (_) {}
+        try { localStorage.setItem(sessionStorageKey(), sid); } catch (_) {}
         if (!n) showEmpty("이 대화에는 메시지가 없습니다.");
       } catch (_) {}
       closeDrawer();
@@ -1004,7 +1005,7 @@
 
     function newConversation() {
       sessionId = null;
-      try { localStorage.removeItem("sessionId"); } catch (_) {}
+      try { localStorage.removeItem(sessionStorageKey()); } catch (_) {}
       showEmpty("새 대화");
       closeDrawer();
       qEl.focus();
@@ -1031,10 +1032,12 @@
       if (e.key === "Escape" && drawer.classList.contains("open")) closeDrawer();
     });
 
-    // 새로고침 시 직전 대화 복원
+    // 새로고침 시 현재 로그인 계정의 직전 대화 복원
     (async function restore() {
+      await loadMe();
+      loadSources();
       let saved = null;
-      try { saved = localStorage.getItem("sessionId"); } catch (_) {}
+      try { saved = localStorage.getItem(sessionStorageKey()); } catch (_) {}
       if (!saved) return;
       try {
         const n = await renderConversation(saved);

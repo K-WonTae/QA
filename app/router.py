@@ -22,7 +22,7 @@ from app.pdf_source import build_pdf_context, list_titles
 from app.prompt_builder import build_answer_prompt
 from app.claude_runner import run_claude
 from app.database import (
-    save_message, get_recent_messages,
+    save_message, get_recent_messages, ensure_session,
     list_sources, get_source_by_delimiter,
     get_source_by_id, get_linked_sources,
     get_session_source, set_session_source,
@@ -444,10 +444,12 @@ def verify_citations(answer: str, sources: list[dict]) -> tuple[str, list[str]]:
 
 def persist_ask(session_id, question, answer, used_files, now_iso,
                 elapsed_ms, category_label, source_delimiter=None,
-                usage=None) -> int | None:
+                usage=None, user_id=None) -> int | None:
     """본문은 DB에만, 운영 로그에는 메타데이터만 남긴다.
     usage(A-5): 실토큰 dict가 주어지면 assistant 행과 운영 로그에 함께 기록한다.
     반환(S-0): 저장한 assistant 메시지의 id(피드백/출처 연동용)."""
+    if user_id is not None and not ensure_session(session_id, now_iso, user_id):
+        raise PermissionError("FORBIDDEN")
     if source_delimiter:
         set_session_source(session_id, source_delimiter)
     save_message(session_id, "user", question, "", now_iso)
@@ -458,7 +460,8 @@ def persist_ask(session_id, question, answer, used_files, now_iso,
 
 
 def handle_ask(question: str, session_id: str, now_iso: str,
-               source_id: int | None = None, dev_view: bool = False) -> dict:
+               source_id: int | None = None, dev_view: bool = False,
+               user_id: int | None = None) -> dict:
     """
     질문 1건 처리(비스트리밍). 동기 함수(블로킹 subprocess 포함)이므로
     호출부에서 threadpool로 실행한다.
@@ -475,7 +478,8 @@ def handle_ask(question: str, session_id: str, now_iso: str,
     # 규정 제목 미매칭 등 → Claude 호출 없이 결정적 안내를 그대로 반환
     if prep.get("direct_answer"):
         persist_ask(session_id, prep["question"], prep["direct_answer"], [],
-                    now_iso, 0, prep["category"], prep["delimiter"])
+                    now_iso, 0, prep["category"], prep["delimiter"],
+                    user_id=user_id)
         return {
             "needs_source": False,
             "category": prep["category"],
@@ -486,7 +490,8 @@ def handle_ask(question: str, session_id: str, now_iso: str,
     answer = run_claude(prep["prompt"])
     elapsed_ms = int((time.monotonic() - start) * 1000)
     persist_ask(session_id, prep["question"], answer, prep["files"],
-                now_iso, elapsed_ms, prep["category"], prep["delimiter"])
+                now_iso, elapsed_ms, prep["category"], prep["delimiter"],
+                user_id=user_id)
     return {
         "needs_source": False,
         "category": prep["category"],
