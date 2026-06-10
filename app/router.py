@@ -236,7 +236,14 @@ def _gather_with_links(primary: dict, question: str) -> tuple[str, list[str], li
 
     반환: (병합 문서, 사용 표시 목록, 실제 기여한 연계 출처 라벨 목록, 스캔 메타)
     """
-    sources = [primary] + get_linked_sources(primary["id"])
+    return _gather_from_sources([primary] + get_linked_sources(primary["id"]), question)
+
+
+def _gather_from_sources(sources: list[dict], question: str
+                         ) -> tuple[str, list[str], list[str], dict]:
+    """주어진 출처 목록 전체에서 질문 관련 문서를 예산 안에서 모아 병합한다.
+    체크리스트 다중 선택과 '주 출처+연계' 양쪽이 공유하는 공통 수집기.
+    sources[0]을 주 출처로 보고, 나머지의 라벨을 linked_labels로 돌려준다."""
     n = len(sources)
     blocks: list[str] = []
     used: list[str] = []
@@ -273,8 +280,69 @@ def _gather_with_links(primary: dict, question: str) -> tuple[str, list[str], li
     return "\n\n".join(blocks), used, linked_labels, scan_meta
 
 
+def _resolve_selected(source_ids: list[int] | None) -> list[dict]:
+    """체크리스트로 받은 source_ids를 '활성 출처' 목록으로 정제한다(순서·중복 제거)."""
+    if not source_ids:
+        return []
+    out: list[dict] = []
+    seen: set[int] = set()
+    for sid in source_ids:
+        if not isinstance(sid, int) or sid in seen:
+            continue
+        s = get_source_by_id(sid)
+        if s and s["enabled"]:
+            out.append(s)
+            seen.add(sid)
+    return out
+
+
+def _prepare_multi(question: str, session_id: str, selected: list[dict],
+                   dev_view: bool) -> dict:
+    """체크리스트로 2개 이상 출처가 선택된 경우의 처리.
+    선택한 출처들(+각자의 고정 연계)을 한 범위로 묶어 문서를 모은 뒤 프롬프트를 만든다.
+    단일 출처 전용 즉답(목록/규정 미매칭)은 모호하므로 적용하지 않는다."""
+    q = validate_question(question)
+    # 선택 출처 + 각자의 고정 연계를 합쳐 중복 제거(선택 순서 유지).
+    expanded: list[dict] = []
+    seen: set[int] = set()
+    for s in selected:
+        for cand in [s] + get_linked_sources(s["id"]):
+            if cand["id"] not in seen:
+                expanded.append(cand)
+                seen.add(cand["id"])
+
+    documents, used_files, _labels, scan_meta = _gather_from_sources(expanded, q)
+    delim = selected[0]["delimiter"]
+    category = " + ".join(dict.fromkeys(s["label"] for s in selected))
+
+    if not used_files:
+        answer = (
+            "## 관련 문서를 찾지 못했습니다\n"
+            "선택한 폴더에서 질문과 맞는 문서를 찾지 못했습니다. "
+            "질문을 더 구체적으로 적거나, 왼쪽에서 폴더 선택을 조정해 다시 물어봐 주세요."
+        )
+        return {
+            "needs_source": False, "direct_answer": answer,
+            "question": q, "delimiter": delim, "category": category,
+            "files": [], "sources": [], "intent": "content",
+        }
+
+    if dev_view and scan_meta.get("reduced_scan"):
+        category += " ⚠️파일명 기반 축소 검색 적용"
+    session_summary = _build_session_summary(session_id)
+    sources = _sources_from_used(used_files)
+    prompt = build_answer_prompt(category, session_summary, documents, q,
+                                 dev_view, catalog="",
+                                 cite_names=[s["path"] for s in sources])
+    return {
+        "needs_source": False, "question": q, "delimiter": delim,
+        "category": category, "files": used_files, "prompt": prompt,
+        "sources": sources, "intent": "content",
+    }
+
+
 def prepare_ask(question: str, session_id: str, source_id: int | None = None,
-                dev_view: bool = False) -> dict:
+                dev_view: bool = False, source_ids: list[int] | None = None) -> dict:
     """
     CLI 호출 '전' 단계(빠름·블로킹 없음): 입력 검증 → 구분자 라우팅 →
     문서 선택 → 프롬프트 구성.
@@ -284,6 +352,13 @@ def prepare_ask(question: str, session_id: str, source_id: int | None = None,
       - {"needs_source": False, "question","category","files","prompt"}
     예외: ValueError(코드)
     """
+    # 체크리스트 다중 선택 우선. 2개 이상이면 다중 경로, 1개면 그 출처로 단일 처리.
+    selected = _resolve_selected(source_ids)
+    if len(selected) >= 2:
+        return _prepare_multi(question, session_id, selected, dev_view)
+    if len(selected) == 1:
+        source_id = selected[0]["id"]
+
     q = validate_question(question)
 
     enabled = list_sources(enabled_only=True)
@@ -461,7 +536,8 @@ def persist_ask(session_id, question, answer, used_files, now_iso,
 
 def handle_ask(question: str, session_id: str, now_iso: str,
                source_id: int | None = None, dev_view: bool = False,
-               user_id: int | None = None) -> dict:
+               user_id: int | None = None,
+               source_ids: list[int] | None = None) -> dict:
     """
     질문 1건 처리(비스트리밍). 동기 함수(블로킹 subprocess 포함)이므로
     호출부에서 threadpool로 실행한다.
@@ -471,7 +547,7 @@ def handle_ask(question: str, session_id: str, now_iso: str,
     예외: ValueError(코드) / RuntimeError(코드) / PermissionError
     """
     start = time.monotonic()
-    prep = prepare_ask(question, session_id, source_id, dev_view)
+    prep = prepare_ask(question, session_id, source_id, dev_view, source_ids)
     if prep["needs_source"]:
         return {"needs_source": True, "sources": prep["sources"]}
 

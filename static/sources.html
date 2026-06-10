@@ -75,6 +75,36 @@
     button.del:disabled { opacity: .35; cursor: default; }
     .empty-row td { color: var(--muted); text-align: center; padding: 18px; }
   </style>
+
+  <!-- ===== 밝은 테마 (index.html과 톤 일치, 뒤에 정의되어 우선 적용) ===== -->
+  <style>
+    :root {
+      --bg: #eef1f7; --panel: #ffffff; --panel-2: #f3f6fc; --border: #d9e1ee; --border-soft: #e6ecf5;
+      --text: #1d2531; --muted: #6a7689; --accent: #3f66f0; --accent-2: #2b4fd8; --accent-soft: #eaf0ff;
+      --danger: #e0413f; --ok: #16a35a;
+      --shadow: 0 6px 22px rgba(31,52,98,.10); --shadow-soft: 0 2px 8px rgba(31,52,98,.06);
+    }
+    body {
+      font-family: "Pretendard", "Inter", -apple-system, "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+      background:
+        radial-gradient(820px 420px at 88% -8%, rgba(91,134,255,.10), transparent 60%),
+        radial-gradient(620px 420px at -6% 108%, rgba(63,102,240,.07), transparent 55%),
+        var(--bg);
+    }
+    header { background: rgba(255,255,255,.85); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border-soft); }
+    header a.back { color: var(--accent); font-weight: 500; }
+    .card { border: 1px solid var(--border); box-shadow: var(--shadow-soft); }
+    .card h2 { color: #16203a; }
+    input[type=text], select { background: #fff; box-shadow: inset 0 1px 2px rgba(31,52,98,.04); }
+    .linkbox { background: #fff; }
+    .chip { background: var(--accent-soft); border: 1px solid #c5d3fb; color: var(--accent-2); }
+    td.path { color: #5a6781; }
+    th { color: var(--muted); }
+    button.primary { box-shadow: 0 3px 12px rgba(63,102,240,.3); transition: all .15s; }
+    button.primary:hover { transform: translateY(-1px); box-shadow: 0 5px 16px rgba(63,102,240,.42); }
+    button.del { background: #fff; color: var(--danger); }
+    button.del:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+  </style>
 </head>
 <body>
   <header>
@@ -187,7 +217,7 @@
           return;
         }
         const byId = new Map(rows.map(s => [s.id, s]));
-        const editStyle = "border:1px solid var(--border);background:var(--panel-2);color:#cdd6e4;border-radius:7px;padding:4px 11px;font-size:12.5px;cursor:pointer;margin-right:6px;font-family:inherit";
+        const editStyle = "border:1px solid var(--border);background:var(--panel-2);color:#41506a;border-radius:7px;padding:4px 11px;font-size:12.5px;cursor:pointer;margin-right:6px;font-family:inherit";
         tbody.innerHTML = rows.map(s => {
           const def = s.is_default ? ' <span class="badge">기본</span>' : '';
           const kindBadge = s.kind === 'pdf_index' ? ' <span class="badge">PDF 실시간</span>' : '';

@@ -243,6 +243,13 @@ async def _parse_ask_request(request: Request) -> dict:
     source_id = payload.get("source_id") if isinstance(payload, dict) else None
     if not isinstance(source_id, int):
         source_id = None
+    # 체크리스트 다중 선택: source_ids(정수 리스트). 정수만 추리고 중복 제거.
+    raw_ids = payload.get("source_ids") if isinstance(payload, dict) else None
+    source_ids: list[int] = []
+    if isinstance(raw_ids, list):
+        for v in raw_ids:
+            if isinstance(v, int) and not isinstance(v, bool) and v not in source_ids:
+                source_ids.append(v)
     dev_view = bool(payload.get("dev_view")) if isinstance(payload, dict) else False
     if not isinstance(session_id, str) or not session_id:
         session_id = uuid.uuid4().hex
@@ -252,7 +259,8 @@ async def _parse_ask_request(request: Request) -> dict:
         raise PermissionError("FORBIDDEN")
     return {
         "question": question, "session_id": session_id,
-        "source_id": source_id, "dev_view": dev_view, "now": now,
+        "source_id": source_id, "source_ids": source_ids,
+        "dev_view": dev_view, "now": now,
         "user_id": user["user_id"],
     }
 
@@ -857,6 +865,7 @@ async def ask(request: Request):
         result = await run_in_threadpool(
             handle_ask, question, session_id, now,
             params["source_id"], params["dev_view"], params["user_id"],
+            params["source_ids"],
         )
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": error_message(str(e))})
@@ -905,13 +914,14 @@ async def ask_stream(request: Request):
     question = params["question"]
     session_id = params["session_id"]
     source_id = params["source_id"]
+    source_ids = params["source_ids"]
     dev_view = params["dev_view"]
     now = params["now"]
 
     # CLI 호출 전 단계(검증/분류/문서선택/프롬프트)는 빠르므로 먼저 동기 처리.
     # 여기서 입력 오류면 스트림을 열기 전에 일반 JSON 에러로 응답한다.
     try:
-        prep = await run_in_threadpool(prepare_ask, question, session_id, source_id, dev_view)
+        prep = await run_in_threadpool(prepare_ask, question, session_id, source_id, dev_view, source_ids)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": error_message(str(e))})
     except Exception:
