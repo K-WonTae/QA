@@ -80,8 +80,212 @@ def init_db() -> None:
             "  created_at TEXT NOT NULL"
             ")"
         )
+        # 사용자 계정. 비밀번호는 해시 문자열만 저장(auth.hash_password 형식).
+        # role: 'admin'(폴더·사용자 관리) | 'user'(채팅만). username은 유일.
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS users ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  username TEXT NOT NULL UNIQUE,"
+            "  password_hash TEXT NOT NULL,"
+            "  role TEXT NOT NULL DEFAULT 'user',"
+            "  enabled INTEGER NOT NULL DEFAULT 1,"
+            "  created_at TEXT NOT NULL,"
+            "  created_by TEXT"
+            ")"
+        )
+        # 로그인 세션(쿠키 토큰). 만료/로그아웃 시 삭제한다.
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS auth_sessions ("
+            "  token TEXT PRIMARY KEY,"
+            "  user_id INTEGER NOT NULL,"
+            "  created_at TEXT NOT NULL,"
+            "  expires_at TEXT NOT NULL,"
+            "  ip TEXT"
+            ")"
+        )
+        # 로그인 이력(성공/실패 모두). IP·User-Agent를 함께 수집한다.
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS login_history ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  user_id INTEGER,"
+            "  username TEXT NOT NULL,"
+            "  success INTEGER NOT NULL,"
+            "  ip TEXT,"
+            "  user_agent TEXT,"
+            "  created_at TEXT NOT NULL"
+            ")"
+        )
     # DB 파일 권한 제한 (11장)
     _lock_down(DB_PATH)
+
+
+# ---- 사용자 계정 ----
+
+_USER_COLS = ("id", "username", "password_hash", "role", "enabled", "created_at", "created_by")
+_USER_SELECT = "id, username, password_hash, role, enabled, created_at, created_by"
+
+
+def _row_to_user(row: tuple) -> dict:
+    return dict(zip(_USER_COLS, row))
+
+
+def create_user(username: str, password_hash: str, role: str,
+                created_at: str, created_by: str | None) -> int:
+    """사용자 추가. username 중복 시 sqlite3.IntegrityError."""
+    with _conn() as cur:
+        cur.execute(
+            "INSERT INTO users (username, password_hash, role, enabled, created_at, created_by) "
+            "VALUES (?, ?, ?, 1, ?, ?)",
+            (username, password_hash, role, created_at, created_by),
+        )
+        return int(cur.lastrowid)
+
+
+def seed_admin_if_empty(username: str, password_hash: str, created_at: str) -> bool:
+    """사용자가 한 명도 없을 때만 최초 관리자를 만든다(최초 1회). 생성 시 True."""
+    with _conn() as cur:
+        cur.execute("SELECT COUNT(*) FROM users")
+        if int(cur.fetchone()[0]) > 0:
+            return False
+        cur.execute(
+            "INSERT INTO users (username, password_hash, role, enabled, created_at, created_by) "
+            "VALUES (?, ?, 'admin', 1, ?, 'system')",
+            (username, password_hash, created_at),
+        )
+        return True
+
+
+def get_user_by_username(username: str) -> dict | None:
+    with _conn() as cur:
+        cur.execute("SELECT " + _USER_SELECT + " FROM users WHERE username = ?", (username,))
+        row = cur.fetchone()
+    return _row_to_user(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    with _conn() as cur:
+        cur.execute("SELECT " + _USER_SELECT + " FROM users WHERE id = ?", (user_id,))
+        row = cur.fetchone()
+    return _row_to_user(row) if row else None
+
+
+def list_users() -> list[dict]:
+    with _conn() as cur:
+        cur.execute(
+            "SELECT " + _USER_SELECT + " FROM users ORDER BY role DESC, id ASC"
+        )
+        rows = cur.fetchall()
+    return [_row_to_user(r) for r in rows]
+
+
+def count_admins() -> int:
+    """활성 관리자 수(마지막 관리자 비활성/삭제 방지용)."""
+    with _conn() as cur:
+        cur.execute("SELECT COUNT(*) FROM users WHERE role = 'admin' AND enabled = 1")
+        return int(cur.fetchone()[0])
+
+
+def update_user_fields(user_id: int, role: str, enabled: int) -> bool:
+    """역할/활성 여부를 수정한다(비밀번호는 별도 함수)."""
+    with _conn() as cur:
+        cur.execute(
+            "UPDATE users SET role = ?, enabled = ? WHERE id = ?",
+            (role, enabled, user_id),
+        )
+        return cur.rowcount > 0
+
+
+def set_user_password(user_id: int, password_hash: str) -> bool:
+    """비밀번호 해시를 교체한다. 해당 사용자의 모든 세션도 무효화(아래 호출부에서 처리)."""
+    with _conn() as cur:
+        cur.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (password_hash, user_id),
+        )
+        return cur.rowcount > 0
+
+
+def delete_user(user_id: int) -> bool:
+    """사용자와 그 세션을 함께 삭제한다(로그인 이력은 감사 목적상 보존)."""
+    with _conn() as cur:
+        cur.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
+        cur.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        return cur.rowcount > 0
+
+
+# ---- 로그인 세션 ----
+
+def create_auth_session(token: str, user_id: int, created_at: str,
+                        expires_at: str, ip: str | None) -> None:
+    with _conn() as cur:
+        cur.execute(
+            "INSERT INTO auth_sessions (token, user_id, created_at, expires_at, ip) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (token, user_id, created_at, expires_at, ip),
+        )
+
+
+def get_auth_session(token: str) -> dict | None:
+    """토큰으로 세션 + 사용자 정보를 함께 조회한다(활성 사용자만)."""
+    with _conn() as cur:
+        cur.execute(
+            "SELECT s.token, s.user_id, s.expires_at, "
+            "       u.username, u.role, u.enabled "
+            "FROM auth_sessions s JOIN users u ON u.id = s.user_id "
+            "WHERE s.token = ?",
+            (token,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "token": row[0], "user_id": row[1], "expires_at": row[2],
+        "username": row[3], "role": row[4], "enabled": row[5],
+    }
+
+
+def delete_auth_session(token: str) -> None:
+    with _conn() as cur:
+        cur.execute("DELETE FROM auth_sessions WHERE token = ?", (token,))
+
+
+def delete_user_sessions(user_id: int) -> None:
+    """해당 사용자의 모든 세션 무효화(비밀번호 변경·비활성화 시)."""
+    with _conn() as cur:
+        cur.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
+
+
+def purge_expired_sessions(now_iso: str) -> None:
+    with _conn() as cur:
+        cur.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (now_iso,))
+
+
+# ---- 로그인 이력 ----
+
+def record_login(user_id: int | None, username: str, success: bool,
+                 ip: str | None, user_agent: str | None, created_at: str) -> None:
+    with _conn() as cur:
+        cur.execute(
+            "INSERT INTO login_history (user_id, username, success, ip, user_agent, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, username, 1 if success else 0, ip, user_agent, created_at),
+        )
+
+
+def list_login_history(limit: int = 200) -> list[dict]:
+    """최근 로그인 시도(성공·실패)를 최신순으로."""
+    with _conn() as cur:
+        cur.execute(
+            "SELECT username, success, ip, user_agent, created_at "
+            "FROM login_history ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        rows = cur.fetchall()
+    return [
+        {"username": r[0], "success": bool(r[1]), "ip": r[2],
+         "user_agent": r[3], "created_at": r[4]}
+        for r in rows
+    ]
 
 
 def get_meta(key: str) -> str | None:

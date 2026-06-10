@@ -38,6 +38,8 @@ ERROR_MESSAGES = {
     "CLAUDE_TIMEOUT": "응답 생성이 지연되어 중단되었습니다. 다시 시도해주세요.",
     "CLAUDE_FAILED": "답변 생성 중 오류가 발생했습니다.",
     "PermissionError": "허용되지 않은 요청입니다.",
+    "AUTH_REQUIRED": "로그인이 필요합니다.",
+    "FORBIDDEN": "권한이 없습니다. 관리자만 접근할 수 있습니다.",
     "INTERNAL": "처리 중 오류가 발생했습니다.",
 }
 

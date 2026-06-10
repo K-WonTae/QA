@@ -37,7 +37,13 @@ from app.database import (
     set_links, get_all_link_ids,
     list_conversations, get_conversation, delete_conversation,
     message_exists, save_feedback,
+    seed_admin_if_empty, get_user_by_username, get_user_by_id,
+    create_user, list_users, count_admins, update_user_fields,
+    set_user_password, delete_user, delete_user_sessions,
+    create_auth_session, get_auth_session, delete_auth_session,
+    purge_expired_sessions, record_login, list_login_history,
 )
+from app import auth
 from app.sources import (
     SourceError, validate_delimiter, validate_label,
     validate_suffixes, validate_root_path, validate_division,
@@ -107,6 +113,17 @@ async def lifespan(app: FastAPI):
             kind="pdf_index", division="학사",
         )
         set_meta("defaults_seeded", "1")
+    # 최초 관리자는 환경변수가 설정되고 사용자가 한 명도 없을 때만 1회 생성한다.
+    initial_admin_username = os.environ.get("INITIAL_ADMIN_USERNAME")
+    initial_admin_password = os.environ.get("INITIAL_ADMIN_PASSWORD")
+    if initial_admin_username and initial_admin_password:
+        if seed_admin_if_empty(
+            initial_admin_username,
+            auth.hash_password(initial_admin_password),
+            _now_iso(),
+        ):
+            from app.logging_conf import logger
+            logger.info("seeded initial admin account from environment")
     yield
 
 
@@ -125,6 +142,55 @@ def require_app_token(request: Request) -> None:
     """8.3 CSRF: 상태 변경 요청은 발급된 토큰 일치 시에만 처리."""
     if request.headers.get("x-app-token") != APP_TOKEN:
         raise PermissionError("CSRF_BLOCKED")
+
+
+# ---- 인증/인가 ----
+
+def current_user(request: Request) -> dict | None:
+    """쿠키의 세션 토큰으로 현재 사용자를 해석한다.
+    유효(미만료·활성 사용자)하면 {user_id, username, role}, 아니면 None.
+    만료 세션은 즉시 정리한다."""
+    token = request.cookies.get(auth.SESSION_COOKIE)
+    if not token:
+        return None
+    sess = get_auth_session(token)
+    if sess is None:
+        return None
+    if not sess.get("enabled") or auth.is_expired(sess["expires_at"]):
+        delete_auth_session(token)
+        return None
+    return {"user_id": sess["user_id"], "username": sess["username"], "role": sess["role"]}
+
+
+def require_user(request: Request) -> dict:
+    """로그인 필요. 미인증이면 PermissionError('AUTH_REQUIRED')."""
+    user = current_user(request)
+    if user is None:
+        raise PermissionError("AUTH_REQUIRED")
+    return user
+
+
+def require_admin(request: Request) -> dict:
+    """관리자 권한 필요. 미인증/권한부족이면 PermissionError."""
+    user = require_user(request)
+    if user.get("role") != "admin":
+        raise PermissionError("FORBIDDEN")
+    return user
+
+
+def _set_session_cookie(resp, token: str) -> None:
+    """세션 쿠키 설정(httponly, samesite=lax). 로컬 http라 secure는 끈다."""
+    resp.set_cookie(
+        key=auth.SESSION_COOKIE, value=token, httponly=True,
+        samesite="lax", max_age=auth.SESSION_TTL_HOURS * 3600, path="/",
+    )
+
+
+def _auth_error_response(code: str) -> JSONResponse:
+    """인증/인가 PermissionError를 상태코드에 맞춰 응답으로 변환한다.
+    AUTH_REQUIRED → 401, FORBIDDEN → 403, 그 외(CSRF 등) → 403."""
+    status = 401 if code == "AUTH_REQUIRED" else 403
+    return JSONResponse(status_code=status, content={"error": error_message(code)})
 
 
 def _now_iso() -> str:
