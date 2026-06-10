@@ -70,10 +70,21 @@ MAX_FILES_TOTAL = _env_int("MAX_FILES_TOTAL", 12)
 MIN_SOURCE_CONTEXT_BYTES = _env_int("MIN_SOURCE_CONTEXT_BYTES", 8 * 1024)
 CLAUDE_TIMEOUT_SEC = 90                  # CLI 실행 타임아웃
 
-# 서버 바인딩 (외부 노출 금지)
-HOST = "127.0.0.1"
-PORT = 8000
-ALLOWED_HOSTS = {"127.0.0.1:8000", "localhost:8000"}
+# 서버 바인딩.
+# LAN 접속을 위해 0.0.0.0(모든 인터페이스)로 바인딩한다. 단, 이는 신뢰된 사내/가정
+# LAN 전용이며 인터넷에 직접 공개하지 않는다(HTTPS·역방향 프록시 없이는 위험).
+HOST = "0.0.0.0"
+PORT = 8999
+# Host 헤더 검증(DNS Rebinding 차단)에 허용할 "호스트:포트" 집합.
+# localhost + 이 PC의 LAN IP. IP가 바뀌거나 다른 접속 주소가 필요하면
+# 여기에 추가하거나 EXTRA_ALLOWED_HOSTS 환경변수(콤마 구분)로 더한다.
+ALLOWED_HOSTS = {
+    "127.0.0.1:8999", "localhost:8999",
+    "192.168.132.216:8999",
+}
+ALLOWED_HOSTS |= {
+    h.strip() for h in os.environ.get("EXTRA_ALLOWED_HOSTS", "").split(",") if h.strip()
+}
 
 # CLI 실행 시 상속할 환경변수 화이트리스트
 ENV_WHITELIST = {"PATH", "HOME", "USERPROFILE", "SystemRoot", "ANTHROPIC_API_KEY", "LANG"}

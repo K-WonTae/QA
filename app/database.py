@@ -115,6 +115,15 @@ def init_db() -> None:
             "  created_at TEXT NOT NULL"
             ")"
         )
+        # 차단 IP(블랙리스트). 여기 등록된 IP는 어떤 요청도 거부한다(미들웨어에서 처리).
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS ip_blacklist ("
+            "  ip TEXT PRIMARY KEY,"
+            "  reason TEXT,"
+            "  created_at TEXT NOT NULL,"
+            "  created_by TEXT"
+            ")"
+        )
     # DB 파일 권한 제한 (11장)
     _lock_down(DB_PATH)
 
@@ -284,6 +293,64 @@ def list_login_history(limit: int = 200) -> list[dict]:
     return [
         {"username": r[0], "success": bool(r[1]), "ip": r[2],
          "user_agent": r[3], "created_at": r[4]}
+        for r in rows
+    ]
+
+
+def list_login_ips() -> list[dict]:
+    """로그인 이력에 등장한 IP별 집계(시도/성공/마지막시각/사용자목록), 최근순."""
+    with _conn() as cur:
+        cur.execute(
+            "SELECT ip, COUNT(*) AS attempts, COALESCE(SUM(success), 0) AS successes, "
+            "       MAX(created_at) AS last_at, GROUP_CONCAT(DISTINCT username) AS usernames "
+            "FROM login_history WHERE ip IS NOT NULL AND ip != '' "
+            "GROUP BY ip ORDER BY last_at DESC"
+        )
+        rows = cur.fetchall()
+    return [
+        {"ip": r[0], "attempts": int(r[1]), "successes": int(r[2]),
+         "last_at": r[3], "usernames": (r[4] or "")}
+        for r in rows
+    ]
+
+
+def delete_sessions_by_ip(ip: str) -> None:
+    """해당 IP로 발급된 활성 세션을 모두 무효화(차단 시 즉시 강제 로그아웃)."""
+    with _conn() as cur:
+        cur.execute("DELETE FROM auth_sessions WHERE ip = ?", (ip,))
+
+
+# ---- IP 블랙리스트 ----
+
+def add_ip_block(ip: str, reason: str | None, created_at: str,
+                 created_by: str | None) -> None:
+    """차단 IP 등록(이미 있으면 사유/시각 갱신)."""
+    with _conn() as cur:
+        cur.execute(
+            "INSERT INTO ip_blacklist (ip, reason, created_at, created_by) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(ip) DO UPDATE SET reason = excluded.reason, "
+            "  created_at = excluded.created_at, created_by = excluded.created_by",
+            (ip, reason, created_at, created_by),
+        )
+
+
+def remove_ip_block(ip: str) -> bool:
+    with _conn() as cur:
+        cur.execute("DELETE FROM ip_blacklist WHERE ip = ?", (ip,))
+        return cur.rowcount > 0
+
+
+def list_ip_blocks() -> list[dict]:
+    """차단 IP 목록(최근 등록순)."""
+    with _conn() as cur:
+        cur.execute(
+            "SELECT ip, reason, created_at, created_by "
+            "FROM ip_blacklist ORDER BY created_at DESC"
+        )
+        rows = cur.fetchall()
+    return [
+        {"ip": r[0], "reason": r[1], "created_at": r[2], "created_by": r[3]}
         for r in rows
     ]
 

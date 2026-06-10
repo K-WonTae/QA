@@ -42,6 +42,8 @@ from app.database import (
     set_user_password, delete_user, delete_user_sessions,
     create_auth_session, get_auth_session, delete_auth_session,
     purge_expired_sessions, record_login, list_login_history,
+    list_login_ips, delete_sessions_by_ip,
+    add_ip_block, remove_ip_block, list_ip_blocks,
 )
 from app import auth
 from app.sources import (
@@ -97,6 +99,7 @@ APP_TOKEN = _load_or_create_app_token()
 async def lifespan(app: FastAPI):
     setup_logging()
     init_db()
+    _reload_blocklist()
     CLAUDE_WORKDIR.mkdir(parents=True, exist_ok=True)
     # 내장 출처(@지식·@규정)는 '최초 실행 시 1회만' 등록한다.
     # 이후 사용자가 자유롭게 수정/삭제할 수 있고, 삭제해도 다시 생기지 않는다.
@@ -113,28 +116,53 @@ async def lifespan(app: FastAPI):
             kind="pdf_index", division="학사",
         )
         set_meta("defaults_seeded", "1")
-    # 최초 관리자는 환경변수가 설정되고 사용자가 한 명도 없을 때만 1회 생성한다.
-    initial_admin_username = os.environ.get("INITIAL_ADMIN_USERNAME")
-    initial_admin_password = os.environ.get("INITIAL_ADMIN_PASSWORD")
-    if initial_admin_username and initial_admin_password:
-        if seed_admin_if_empty(
+    # 최초 관리자(사용자가 한 명도 없을 때만 1회 생성).
+    # 우선순위: 환경변수(INITIAL_ADMIN_USERNAME/PASSWORD)가 있으면 그 값으로,
+    # 없으면 요구사항대로 admin/admin 으로 시드한다. 첫 로그인 후 비밀번호 변경을 안내한다.
+    initial_admin_username = os.environ.get("INITIAL_ADMIN_USERNAME") or "admin"
+    initial_admin_password = os.environ.get("INITIAL_ADMIN_PASSWORD") or "admin"
+    if seed_admin_if_empty(
+        initial_admin_username,
+        auth.hash_password(initial_admin_password),
+        _now_iso(),
+    ):
+        from app.logging_conf import logger
+        logger.info(
+            "seeded initial admin account (username=%s) — change the password after first login",
             initial_admin_username,
-            auth.hash_password(initial_admin_password),
-            _now_iso(),
-        ):
-            from app.logging_conf import logger
-            logger.info("seeded initial admin account from environment")
+        )
     yield
 
 
 app = FastAPI(lifespan=lifespan)
 
 
+# 차단 IP 캐시(메모리). DB가 진실 원본이고, 변경 시 _reload_blocklist로 갱신한다.
+_BLOCKED_IPS: set = set()
+# 루프백은 절대 차단하지 않는다(서버 PC에서의 관리자 복구 경로 보장).
+_LOOPBACK_IPS = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
+def _reload_blocklist() -> None:
+    global _BLOCKED_IPS
+    try:
+        _BLOCKED_IPS = {b["ip"] for b in list_ip_blocks()}
+    except Exception:
+        _BLOCKED_IPS = set()
+
+
+def _is_loopback(ip: str) -> bool:
+    return ip in _LOOPBACK_IPS
+
+
 @app.middleware("http")
 async def host_guard(request: Request, call_next):
-    """8.2 Host 헤더 검증 (DNS Rebinding 차단)."""
+    """8.2 Host 헤더 검증(DNS Rebinding 차단) + 차단 IP 거부."""
     if request.headers.get("host") not in ALLOWED_HOSTS:
         return JSONResponse(status_code=400, content={"error": "BAD_HOST"})
+    ip = auth.client_ip(request)
+    if ip in _BLOCKED_IPS and not _is_loopback(ip):
+        return JSONResponse(status_code=403, content={"error": "차단된 IP입니다. 관리자에게 문의하세요."})
     return await call_next(request)
 
 
@@ -203,7 +231,8 @@ async def _parse_ask_request(request: Request) -> dict:
     예외: PermissionError(CSRF 차단) / ValueError('INVALID_INPUT').
     반환: {question, session_id, source_id, dev_view, now}
     """
-    require_app_token(request)  # 실패 시 PermissionError
+    require_app_token(request)  # 실패 시 PermissionError(CSRF_BLOCKED)
+    require_user(request)       # 실패 시 PermissionError(AUTH_REQUIRED)
     try:
         payload = await request.json()
     except Exception:
@@ -226,20 +255,388 @@ async def _parse_ask_request(request: Request) -> dict:
     }
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    """index.html 로드 시 CSRF 토큰을 주입한다."""
-    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+def _render_page(name: str) -> HTMLResponse:
+    """static HTML을 읽어 CSRF 토큰을 주입해 응답한다."""
+    html = (STATIC_DIR / name).read_text(encoding="utf-8")
     html = html.replace("__APP_TOKEN__", APP_TOKEN)
     return HTMLResponse(content=html)
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    """로그인 페이지. 이미 로그인했으면 채팅으로 보낸다."""
+    if current_user(request) is not None:
+        return RedirectResponse("/", status_code=302)
+    return _render_page("login.html")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    """채팅 화면. 미로그인 시 로그인 페이지로 보낸다."""
+    if current_user(request) is None:
+        return RedirectResponse("/login", status_code=302)
+    return _render_page("index.html")
 
 
 @app.get("/sources", response_class=HTMLResponse)
-async def sources_page():
-    """폴더(출처) 등록 관리 페이지. CSRF 토큰을 주입한다."""
-    html = (STATIC_DIR / "sources.html").read_text(encoding="utf-8")
-    html = html.replace("__APP_TOKEN__", APP_TOKEN)
-    return HTMLResponse(content=html)
+async def sources_page(request: Request):
+    """폴더(출처) 등록 관리 페이지 — 관리자 전용."""
+    user = current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=302)
+    if user.get("role") != "admin":
+        return RedirectResponse("/", status_code=302)
+    return _render_page("sources.html")
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request):
+    """사용자 관리 + 로그인 이력 페이지 — 관리자 전용."""
+    user = current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=302)
+    if user.get("role") != "admin":
+        return RedirectResponse("/", status_code=302)
+    return _render_page("admin.html")
+
+
+# ---- 인증 API ----
+
+@app.post("/api/login")
+async def api_login(request: Request):
+    """로그인. 성공 시 세션 쿠키 발급. 성공/실패 모두 이력에 IP·UA를 기록한다."""
+    try:
+        require_app_token(request)
+    except PermissionError:
+        return _auth_error_response("CSRF_BLOCKED")
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
+    username = payload.get("username") if isinstance(payload, dict) else None
+    password = payload.get("password") if isinstance(payload, dict) else None
+    if not isinstance(username, str) or not isinstance(password, str) \
+            or not username.strip() or not password:
+        return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
+    username = username.strip()
+
+    ip = auth.client_ip(request)
+    ua = (request.headers.get("user-agent") or "")[:300]
+    now = _now_iso()
+
+    user = await run_in_threadpool(get_user_by_username, username)
+    ok = bool(user) and bool(user["enabled"]) and auth.verify_password(password, user["password_hash"])
+    await run_in_threadpool(
+        record_login, (user["id"] if user else None), username, ok, ip, ua, now
+    )
+    if not ok:
+        # 사용자 존재 여부를 노출하지 않도록 단일 메시지.
+        return JSONResponse(status_code=401, content={"error": "아이디 또는 비밀번호가 올바르지 않습니다."})
+
+    token = auth.new_session_token()
+    await run_in_threadpool(
+        create_auth_session, token, user["id"], now, auth.session_expiry_iso(), ip
+    )
+    await run_in_threadpool(purge_expired_sessions, now)
+    resp = JSONResponse(content={
+        "ok": True,
+        "user": {"username": user["username"], "role": user["role"]},
+        "must_change_password": auth.verify_password("admin", user["password_hash"]),
+    })
+    _set_session_cookie(resp, token)
+    return resp
+
+
+@app.post("/api/logout")
+async def api_logout(request: Request):
+    """로그아웃. 세션을 무효화하고 쿠키를 지운다(CSRF 토큰 필요)."""
+    try:
+        require_app_token(request)
+    except PermissionError:
+        return _auth_error_response("CSRF_BLOCKED")
+    token = request.cookies.get(auth.SESSION_COOKIE)
+    if token:
+        await run_in_threadpool(delete_auth_session, token)
+    resp = JSONResponse(content={"ok": True})
+    resp.delete_cookie(auth.SESSION_COOKIE, path="/")
+    return resp
+
+
+@app.get("/api/me")
+async def api_me(request: Request):
+    """현재 로그인 사용자 정보(헤더 표시·권한 분기용)."""
+    user = current_user(request)
+    if user is None:
+        return _auth_error_response("AUTH_REQUIRED")
+    return JSONResponse(content={"username": user["username"], "role": user["role"]})
+
+
+@app.post("/api/change-password")
+async def api_change_password(request: Request):
+    """본인 비밀번호 변경. 현재 비밀번호 확인 후 교체하고 다른 세션을 모두 무효화한다."""
+    try:
+        require_app_token(request)
+        user = require_user(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
+    current_pw = payload.get("current_password") if isinstance(payload, dict) else None
+    new_pw = payload.get("new_password") if isinstance(payload, dict) else None
+    if not isinstance(current_pw, str) or not isinstance(new_pw, str) or len(new_pw) < 4:
+        return JSONResponse(status_code=400, content={"error": "새 비밀번호는 4자 이상이어야 합니다."})
+
+    row = await run_in_threadpool(get_user_by_id, user["user_id"])
+    if row is None or not auth.verify_password(current_pw, row["password_hash"]):
+        return JSONResponse(status_code=400, content={"error": "현재 비밀번호가 올바르지 않습니다."})
+
+    await run_in_threadpool(set_user_password, user["user_id"], auth.hash_password(new_pw))
+    # 다른 기기 세션은 모두 끊고, 현재 세션만 새로 발급한다.
+    await run_in_threadpool(delete_user_sessions, user["user_id"])
+    token = auth.new_session_token()
+    now = _now_iso()
+    await run_in_threadpool(
+        create_auth_session, token, user["user_id"], now, auth.session_expiry_iso(),
+        auth.client_ip(request),
+    )
+    resp = JSONResponse(content={"ok": True})
+    _set_session_cookie(resp, token)
+    return resp
+
+
+# ---- 사용자 관리 API (관리자 전용) ----
+
+def _user_public(u: dict) -> dict:
+    """비밀번호 해시를 제외한 안전한 사용자 표현."""
+    return {
+        "id": u["id"], "username": u["username"], "role": u["role"],
+        "enabled": bool(u["enabled"]), "created_at": u["created_at"],
+        "created_by": u.get("created_by"),
+    }
+
+
+@app.get("/api/users")
+async def api_list_users(request: Request):
+    try:
+        require_admin(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
+    rows = await run_in_threadpool(list_users)
+    return JSONResponse(content={"users": [_user_public(u) for u in rows]})
+
+
+@app.post("/api/users")
+async def api_create_user(request: Request):
+    try:
+        require_app_token(request)
+        admin = require_admin(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
+    username = (payload.get("username") if isinstance(payload, dict) else None) or ""
+    password = (payload.get("password") if isinstance(payload, dict) else None) or ""
+    role = (payload.get("role") if isinstance(payload, dict) else None) or "user"
+    username = username.strip() if isinstance(username, str) else ""
+    if not username or not isinstance(password, str) or len(password) < 4:
+        return JSONResponse(status_code=400, content={"error": "아이디와 4자 이상 비밀번호를 입력해주세요."})
+    if not (3 <= len(username) <= 30) or not all(c.isalnum() or c in "._-" for c in username):
+        return JSONResponse(status_code=400, content={"error": "아이디는 3~30자의 영문/숫자/._- 만 가능합니다."})
+    if role not in ("admin", "user"):
+        return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
+
+    try:
+        await run_in_threadpool(
+            create_user, username, auth.hash_password(password), role,
+            _now_iso(), admin["username"],
+        )
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "이미 존재하는 아이디입니다."})
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/api/users/update")
+async def api_update_user(request: Request):
+    """역할/활성 여부 또는 비밀번호 변경(관리자가 타 사용자 대상)."""
+    try:
+        require_app_token(request)
+        admin = require_admin(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
+    uid = payload.get("id") if isinstance(payload, dict) else None
+    if not isinstance(uid, int) or isinstance(uid, bool):
+        return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
+    target = await run_in_threadpool(get_user_by_id, uid)
+    if target is None:
+        return JSONResponse(status_code=400, content={"error": "존재하지 않는 사용자입니다."})
+
+    # 비밀번호 재설정만 요청한 경우
+    new_pw = payload.get("new_password") if isinstance(payload, dict) else None
+    if new_pw is not None:
+        if not isinstance(new_pw, str) or len(new_pw) < 4:
+            return JSONResponse(status_code=400, content={"error": "새 비밀번호는 4자 이상이어야 합니다."})
+        await run_in_threadpool(set_user_password, uid, auth.hash_password(new_pw))
+        await run_in_threadpool(delete_user_sessions, uid)  # 기존 세션 무효화
+        return JSONResponse(content={"ok": True})
+
+    role = payload.get("role") if isinstance(payload, dict) else None
+    enabled = payload.get("enabled") if isinstance(payload, dict) else None
+    if role not in ("admin", "user") or not isinstance(enabled, bool):
+        return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
+
+    # 마지막 관리자를 강등/비활성화하지 못하게 막는다(잠금 방지).
+    losing_admin = (target["role"] == "admin" and bool(target["enabled"])
+                    and (role != "admin" or not enabled))
+    if losing_admin and await run_in_threadpool(count_admins) <= 1:
+        return JSONResponse(status_code=400, content={"error": "마지막 관리자는 강등하거나 비활성화할 수 없습니다."})
+
+    await run_in_threadpool(update_user_fields, uid, role, 1 if enabled else 0)
+    if not enabled:
+        await run_in_threadpool(delete_user_sessions, uid)  # 비활성화 시 즉시 로그아웃
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/api/users/delete")
+async def api_delete_user(request: Request):
+    try:
+        require_app_token(request)
+        admin = require_admin(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    uid = payload.get("id") if isinstance(payload, dict) else None
+    if not isinstance(uid, int) or isinstance(uid, bool):
+        return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
+    if uid == admin["user_id"]:
+        return JSONResponse(status_code=400, content={"error": "본인 계정은 삭제할 수 없습니다."})
+    target = await run_in_threadpool(get_user_by_id, uid)
+    if target is None:
+        return JSONResponse(status_code=400, content={"error": "존재하지 않는 사용자입니다."})
+    if target["role"] == "admin" and bool(target["enabled"]) and await run_in_threadpool(count_admins) <= 1:
+        return JSONResponse(status_code=400, content={"error": "마지막 관리자는 삭제할 수 없습니다."})
+    await run_in_threadpool(delete_user, uid)
+    return JSONResponse(content={"ok": True})
+
+
+@app.get("/api/login-history")
+async def api_login_history(request: Request):
+    try:
+        require_admin(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
+    rows = await run_in_threadpool(list_login_history, 200)
+    return JSONResponse(content={"history": rows})
+
+
+# ---- IP 차단(블랙리스트) — 관리자 전용 ----
+
+def _valid_ip_str(ip) -> str | None:
+    """IP 문자열 가벼운 검증(IPv4/IPv6 형태의 문자만 허용). 통과 시 정규화된 문자열."""
+    if not isinstance(ip, str):
+        return None
+    ip = ip.strip()
+    if not ip or len(ip) > 45:
+        return None
+    if not all(c.isdigit() or c in "abcdefABCDEF.:" for c in ip):
+        return None
+    return ip
+
+
+@app.get("/api/login-ips")
+async def api_login_ips(request: Request):
+    """로그인 이력에 등장한 IP별 집계 + 차단 상태. 차단만 된(이력 없는) IP도 함께 보인다."""
+    try:
+        require_admin(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
+    rows = await run_in_threadpool(list_login_ips)
+    blocks = {b["ip"]: b for b in await run_in_threadpool(list_ip_blocks)}
+    my_ip = auth.client_ip(request)
+    out = []
+    seen = set()
+    for r in rows:
+        ip = r["ip"]
+        seen.add(ip)
+        b = blocks.get(ip)
+        out.append({
+            "ip": ip, "attempts": r["attempts"], "successes": r["successes"],
+            "fails": r["attempts"] - r["successes"], "last_at": r["last_at"],
+            "usernames": r["usernames"], "blocked": b is not None,
+            "reason": (b["reason"] if b else None),
+            "is_self": ip == my_ip, "is_loopback": _is_loopback(ip),
+        })
+    # 이력에 없지만 수동으로 차단된 IP도 표에 포함
+    for ip, b in blocks.items():
+        if ip in seen:
+            continue
+        out.append({
+            "ip": ip, "attempts": 0, "successes": 0, "fails": 0,
+            "last_at": b["created_at"], "usernames": "", "blocked": True,
+            "reason": b["reason"], "is_self": ip == my_ip, "is_loopback": _is_loopback(ip),
+        })
+    return JSONResponse(content={"ips": out, "my_ip": my_ip})
+
+
+@app.post("/api/blacklist")
+async def api_block_ip(request: Request):
+    """IP를 차단한다. 본인 현재 IP·루프백은 차단할 수 없다(자기 잠금 방지)."""
+    try:
+        require_app_token(request)
+        admin = require_admin(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
+    ip = _valid_ip_str(payload.get("ip") if isinstance(payload, dict) else None)
+    if ip is None:
+        return JSONResponse(status_code=400, content={"error": "올바른 IP 주소를 입력해주세요."})
+    if _is_loopback(ip):
+        return JSONResponse(status_code=400, content={"error": "로컬(루프백) 주소는 차단할 수 없습니다."})
+    if ip == auth.client_ip(request):
+        return JSONResponse(status_code=400, content={"error": "현재 접속 중인 본인 IP는 차단할 수 없습니다."})
+    reason = payload.get("reason") if isinstance(payload, dict) else None
+    if reason is not None:
+        if not isinstance(reason, str):
+            return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
+        reason = reason.strip()[:200] or None
+
+    await run_in_threadpool(add_ip_block, ip, reason, _now_iso(), admin["username"])
+    await run_in_threadpool(delete_sessions_by_ip, ip)  # 차단 IP의 활성 세션 즉시 해제
+    _reload_blocklist()
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/api/blacklist/delete")
+async def api_unblock_ip(request: Request):
+    """IP 차단을 해제한다."""
+    try:
+        require_app_token(request)
+        require_admin(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    ip = _valid_ip_str(payload.get("ip") if isinstance(payload, dict) else None)
+    if ip is None:
+        return JSONResponse(status_code=400, content={"error": "올바른 IP 주소를 입력해주세요."})
+    await run_in_threadpool(remove_ip_block, ip)
+    _reload_blocklist()
+    return JSONResponse(content={"ok": True})
 
 
 def _source_public(s: dict, linked_ids: list[int] | None = None) -> dict:
@@ -272,7 +669,12 @@ def _clean_linked_ids(raw, valid_ids: set, exclude_id=None) -> list[int]:
 
 
 @app.get("/api/sources")
-async def api_list_sources():
+async def api_list_sources(request: Request):
+    # 채팅 드롭다운 구성에 필요하므로 로그인 사용자라면 누구나 조회 가능(관리는 별개).
+    try:
+        require_user(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
     rows = await run_in_threadpool(list_sources, False)
     links = await run_in_threadpool(get_all_link_ids)
     return JSONResponse(content={
@@ -284,8 +686,9 @@ async def api_list_sources():
 async def api_add_source(request: Request):
     try:
         require_app_token(request)
-    except PermissionError:
-        return JSONResponse(status_code=403, content={"error": error_message("PermissionError")})
+        require_admin(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
     try:
         payload = await request.json()
     except Exception:
@@ -327,8 +730,9 @@ async def api_add_source(request: Request):
 async def api_update_source(request: Request):
     try:
         require_app_token(request)
-    except PermissionError:
-        return JSONResponse(status_code=403, content={"error": error_message("PermissionError")})
+        require_admin(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
     try:
         payload = await request.json()
     except Exception:
@@ -370,8 +774,9 @@ async def api_update_source(request: Request):
 async def api_delete_source(request: Request):
     try:
         require_app_token(request)
-    except PermissionError:
-        return JSONResponse(status_code=403, content={"error": error_message("PermissionError")})
+        require_admin(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
     try:
         payload = await request.json()
     except Exception:
@@ -386,15 +791,23 @@ async def api_delete_source(request: Request):
 
 
 @app.get("/api/history")
-async def api_history_list():
-    """대화 이력 목록(최근순)."""
+async def api_history_list(request: Request):
+    """대화 이력 목록(최근순) — 로그인 필요."""
+    try:
+        require_user(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
     rows = await run_in_threadpool(list_conversations, 100)
     return JSONResponse(content={"conversations": rows})
 
 
 @app.get("/api/history/{session_id}")
-async def api_history_get(session_id: str):
-    """한 대화의 메시지 전체."""
+async def api_history_get(request: Request, session_id: str):
+    """한 대화의 메시지 전체 — 로그인 필요."""
+    try:
+        require_user(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
     if not isinstance(session_id, str) or not session_id.strip():
         return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
     msgs = await run_in_threadpool(get_conversation, session_id, 500)
@@ -405,8 +818,9 @@ async def api_history_get(session_id: str):
 async def api_history_delete(request: Request):
     try:
         require_app_token(request)
-    except PermissionError:
-        return JSONResponse(status_code=403, content={"error": error_message("PermissionError")})
+        require_user(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
     try:
         payload = await request.json()
     except Exception:
@@ -425,11 +839,11 @@ async def health():
 
 @app.post("/api/ask")
 async def ask(request: Request):
-    # 공통 전처리(CSRF·파싱·세션). 실패는 그대로 에러 응답으로 매핑.
+    # 공통 전처리(CSRF·인증·파싱·세션). 실패는 그대로 에러 응답으로 매핑.
     try:
         params = await _parse_ask_request(request)
-    except PermissionError:
-        return JSONResponse(status_code=403, content={"error": error_message("PermissionError")})
+    except PermissionError as e:
+        return _auth_error_response(str(e))
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": error_message(str(e))})
 
@@ -478,11 +892,11 @@ def _sse(event: str, data: dict) -> str:
 @app.post("/api/ask/stream")
 async def ask_stream(request: Request):
     """답변을 토큰 단위로 흘려보내는 스트리밍 엔드포인트(SSE over POST)."""
-    # 공통 전처리(CSRF·파싱·세션). /api/ask 와 동일 헬퍼를 공유(C-2).
+    # 공통 전처리(CSRF·인증·파싱·세션). /api/ask 와 동일 헬퍼를 공유(C-2).
     try:
         params = await _parse_ask_request(request)
-    except PermissionError:
-        return JSONResponse(status_code=403, content={"error": error_message("PermissionError")})
+    except PermissionError as e:
+        return _auth_error_response(str(e))
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": error_message(str(e))})
 
@@ -592,8 +1006,9 @@ async def ask_cancel(request: Request):
     """Esc(중지) 요청: 해당 stream_id의 CLI 프로세스 트리를 즉시 종료한다."""
     try:
         require_app_token(request)
-    except PermissionError:
-        return JSONResponse(status_code=403, content={"error": error_message("PermissionError")})
+        require_user(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
     try:
         payload = await request.json()
     except Exception:
@@ -611,8 +1026,9 @@ async def feedback(request: Request):
     """답변 피드백 수집(F-3). 코멘트는 저장 전용 — 어떤 프롬프트로도 되먹이지 않는다."""
     try:
         require_app_token(request)
-    except PermissionError:
-        return JSONResponse(status_code=403, content={"error": error_message("PermissionError")})
+        require_user(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
     try:
         payload = await request.json()
     except Exception:
@@ -642,12 +1058,16 @@ async def feedback(request: Request):
 
 
 @app.get("/api/source-file")
-async def source_file(source: str = "", path: str = ""):
+async def source_file(request: Request, source: str = "", path: str = ""):
     """참고 문서 다운로드. 반드시 security.py 화이트리스트 관문을 거친다.
     - 로컬 출처: resolve_safe 로 (root 안·심볼릭링크 아님·확장자 화이트리스트) 검증 후 파일 전송.
     - 규정(pdf_index): 제목→공개 URL 매핑 후 허용 호스트(https)만 리다이렉트(서버가 받지 않음).
     GET 읽기이며 Host 헤더 가드로 localhost 로만 제한된다(다른 GET 조회와 동일 수준).
     """
+    try:
+        require_user(request)
+    except PermissionError as e:
+        return _auth_error_response(str(e))
     if not source or not path:
         return JSONResponse(status_code=400, content={"error": error_message("INVALID_INPUT")})
 

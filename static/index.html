@@ -421,10 +421,13 @@
   <header>
     <span class="dot"></span>
     <h1>업무 문서 Q&A</h1>
-    <span class="sub">127.0.0.1 · 로컬 전용</span>
+    <span class="sub"></span>
     <button class="hbtn" id="histBtn">🕘 이력</button>
     <button class="hbtn" id="newBtn">＋ 새 대화</button>
-    <a class="manage" href="/sources">＋ 폴더 등록</a>
+    <a class="manage" id="sourcesLink" href="/sources" style="display:none">＋ 폴더 등록</a>
+    <a class="manage" id="adminLink" href="/admin" style="display:none">👤 사용자 관리</a>
+    <span id="userInfo" class="hint" style="margin-left:14px;color:var(--muted);font-size:12.5px"></span>
+    <button class="hbtn" id="logoutBtn" title="로그아웃">로그아웃</button>
   </header>
 
   <div class="drawer-overlay" id="drawerOverlay"></div>
@@ -873,6 +876,33 @@
     });
 
     btn.addEventListener("click", send);
+
+    // ===== 로그인 사용자/권한 =====
+    async function loadMe() {
+      try {
+        const res = await fetch("/api/me");
+        if (!res.ok) { window.location.href = "/login"; return; }
+        const me = await res.json();
+        const isAdmin = me.role === "admin";
+        document.getElementById("userInfo").textContent =
+          me.username + (isAdmin ? " (관리자)" : " (사용자)");
+        // 폴더 등록·사용자 관리는 관리자에게만 노출한다.
+        document.getElementById("sourcesLink").style.display = isAdmin ? "" : "none";
+        document.getElementById("adminLink").style.display = isAdmin ? "" : "none";
+      } catch (_) { /* 네트워크 오류 시 일반 화면 유지 */ }
+    }
+    document.getElementById("logoutBtn").addEventListener("click", async () => {
+      try {
+        await fetch("/api/logout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-App-Token": APP_TOKEN },
+          body: "{}",
+        });
+      } catch (_) {}
+      window.location.href = "/login";
+    });
+
+    loadMe();
     loadSources();
 
     // 예시 클릭

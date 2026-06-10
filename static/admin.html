@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>사용자 관리</title>
+  <style>
+    :root {
+      --bg: #0f1419; --panel: #1a212b; --panel-2: #222b37; --border: #2c3744;
+      --text: #e6edf3; --muted: #8b97a6; --accent: #3b82f6; --accent-2: #2563eb;
+      --danger: #ef4444; --ok: #22c55e;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+      background: var(--bg); color: var(--text); min-height: 100vh;
+    }
+    header {
+      display: flex; align-items: center; gap: 12px; padding: 14px 20px;
+      background: var(--panel); border-bottom: 1px solid var(--border);
+    }
+    header h1 { font-size: 16px; font-weight: 700; margin: 0; }
+    header .right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+    header a.nav { font-size: 13px; color: var(--accent); text-decoration: none; }
+    header a.nav:hover { text-decoration: underline; }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 24px 16px 60px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 18px; margin-bottom: 22px;
+    }
+    .card h2 { font-size: 14px; margin: 0 0 14px; color: #fff; }
+    label { display: block; font-size: 12.5px; color: var(--muted); margin: 12px 0 5px; }
+    input[type=text], input[type=password], select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--text); font-size: 14px; padding: 9px 11px; font-family: inherit;
+    }
+    input:focus, select:focus { outline: none; border-color: var(--accent); }
+    .row2 { display: flex; gap: 12px; flex-wrap: wrap; }
+    .row2 > div { flex: 1; min-width: 150px; }
+    .actions { margin-top: 16px; display: flex; align-items: center; gap: 10px; }
+    button.primary {
+      border: none; border-radius: 9px; cursor: pointer; background: var(--accent-2);
+      color: #fff; font-size: 14px; font-weight: 600; padding: 9px 18px; font-family: inherit;
+    }
+    button.primary:hover { background: var(--accent); }
+    .msg { font-size: 13px; min-height: 18px; }
+    .msg.err { color: var(--danger); }
+    .msg.ok { color: var(--ok); }
+    .hint { font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; }
+    .badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
+    .badge.admin { color: #fbbf24; border-color: #92750f; }
+    .badge.on { color: var(--ok); border-color: #1f6b3a; }
+    .badge.off { color: var(--danger); border-color: #7a2222; }
+    .badge.fail { color: var(--danger); border-color: #7a2222; }
+    .badge.ok2 { color: var(--ok); border-color: #1f6b3a; }
+    button.mini {
+      border: 1px solid var(--border); background: var(--panel-2); color: #cdd6e4;
+      border-radius: 7px; padding: 4px 10px; font-size: 12px; cursor: pointer; margin-right: 5px; font-family: inherit;
+    }
+    button.mini:hover { border-color: var(--accent); color: #fff; }
+    button.mini.danger:hover { border-color: var(--danger); color: #fff; background: var(--danger); }
+    .empty-row td { color: var(--muted); text-align: center; padding: 18px; }
+    td.mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; color: #b8c2cf; }
+    .tabbtn { background: transparent; border: none; color: var(--muted); font-size: 14px; cursor: pointer;
+      padding: 6px 2px; margin-right: 18px; font-family: inherit; border-bottom: 2px solid transparent; }
+    .tabbtn.active { color: #fff; border-bottom-color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>사용자 관리</h1>
+    <div class="right">
+      <span id="whoami" class="hint" style="margin:0"></span>
+      <a class="nav" href="/sources">폴더 등록</a>
+      <a class="nav" href="/">← 채팅으로</a>
+      <a class="nav" href="#" id="logout">로그아웃</a>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div style="margin-bottom:18px">
+      <button class="tabbtn active" id="tabUsers">사용자</button>
+      <button class="tabbtn" id="tabHistory">로그인 이력</button>
+      <button class="tabbtn" id="tabIps">IP 차단</button>
+      <button class="tabbtn" id="tabMe">내 비밀번호</button>
+    </div>
+
+    <!-- 사용자 탭 -->
+    <section id="paneUsers">
+      <div class="card">
+        <h2>새 사용자 등록</h2>
+        <div class="row2">
+          <div>
+            <label for="nu">아이디</label>
+            <input type="text" id="nu" placeholder="hong" autocomplete="off" />
+          </div>
+          <div>
+            <label for="np">비밀번호</label>
+            <input type="password" id="np" placeholder="4자 이상" autocomplete="new-password" />
+          </div>
+          <div>
+            <label for="nr">권한</label>
+            <select id="nr">
+              <option value="user">사용자 (채팅만)</option>
+              <option value="admin">관리자 (폴더·사용자 관리)</option>
+            </select>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="primary" id="addUser">등록</button>
+          <span class="msg" id="userMsg"></span>
+        </div>
+        <div class="hint">사용자는 채팅만 가능하고, 폴더/사용자 관리는 관리자만 할 수 있습니다.</div>
+      </div>
+
+      <div class="card">
+        <h2>등록된 사용자</h2>
+        <table>
+          <thead>
+            <tr><th>아이디</th><th>권한</th><th>상태</th><th>등록일</th><th>등록자</th><th></th></tr>
+          </thead>
+          <tbody id="userList">
+            <tr class="empty-row"><td colspan="6">불러오는 중…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 로그인 이력 탭 -->
+    <section id="paneHistory" style="display:none">
+      <div class="card">
+        <h2>로그인 이력 <span class="hint" style="margin:0">(최근 200건 · 성공/실패)</span></h2>
+        <table>
+          <thead>
+            <tr><th>시각</th><th>아이디</th><th>결과</th><th>IP</th><th>브라우저</th></tr>
+          </thead>
+          <tbody id="histList">
+            <tr class="empty-row"><td colspan="5">불러오는 중…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- IP 차단 탭 -->
+    <section id="paneIps" style="display:none">
+      <div class="card">
+        <h2>IP 직접 차단</h2>
+        <div class="row2">
+          <div>
+            <label for="bip">IP 주소</label>
+            <input type="text" id="bip" placeholder="예: 192.168.0.50" autocomplete="off" />
+          </div>
+          <div>
+            <label for="breason">사유 (선택)</label>
+            <input type="text" id="breason" placeholder="예: 무단 접근 시도" autocomplete="off" />
+          </div>
+        </div>
+        <div class="actions">
+          <button class="primary" id="addBlock">차단 추가</button>
+          <span class="msg" id="ipMsg"></span>
+        </div>
+        <div class="hint">차단된 IP는 모든 요청이 거부되고, 해당 IP의 로그인 세션도 즉시 해제됩니다.
+          본인 현재 IP(<span id="myIp" class="mono"></span>)와 로컬(127.0.0.1)은 차단할 수 없습니다.</div>
+      </div>
+
+      <div class="card">
+        <h2>접속했던 IP 목록</h2>
+        <table>
+          <thead>
+            <tr><th>IP</th><th>시도</th><th>성공</th><th>실패</th><th>마지막 시각</th><th>사용자</th><th>상태</th><th></th></tr>
+          </thead>
+          <tbody id="ipList">
+            <tr class="empty-row"><td colspan="8">불러오는 중…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 내 비밀번호 탭 -->
+    <section id="paneMe" style="display:none">
+      <div class="card" style="max-width:440px">
+        <h2>내 비밀번호 변경</h2>
+        <label for="cpw">현재 비밀번호</label>
+        <input type="password" id="cpw" autocomplete="current-password" />
+        <label for="npw">새 비밀번호</label>
+        <input type="password" id="npw" autocomplete="new-password" placeholder="4자 이상" />
+        <div class="actions">
+          <button class="primary" id="changePw">변경</button>
+          <span class="msg" id="meMsg"></span>
+        </div>
+        <div class="hint">변경하면 다른 기기의 로그인 세션은 모두 해제됩니다.</div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const APP_TOKEN = "__APP_TOKEN__";
+    const $ = (id) => document.getElementById(id);
+    let me = null;
+
+    function escapeHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+    function fmtTime(iso) {
+      try { return new Date(iso).toLocaleString("ko-KR"); } catch (_) { return iso || ""; }
+    }
+    function setMsg(el, text, kind) {
+      el.textContent = text || "";
+      el.className = "msg" + (kind ? " " + kind : "");
+    }
+    async function postJson(url, body) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-App-Token": APP_TOKEN },
+        body: JSON.stringify(body || {}),
+      });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    }
+
+    // 탭 전환
+    function showTab(which) {
+      const map = {
+        users: ["tabUsers", "paneUsers"], history: ["tabHistory", "paneHistory"],
+        ips: ["tabIps", "paneIps"], me: ["tabMe", "paneMe"],
+      };
+      Object.keys(map).forEach(k => {
+        $(map[k][0]).classList.toggle("active", k === which);
+        $(map[k][1]).style.display = (k === which) ? "" : "none";
+      });
+      if (which === "history") loadHistory();
+      if (which === "ips") loadIps();
+    }
+    $("tabUsers").addEventListener("click", () => showTab("users"));
+    $("tabHistory").addEventListener("click", () => showTab("history"));
+    $("tabIps").addEventListener("click", () => showTab("ips"));
+    $("tabMe").addEventListener("click", () => showTab("me"));
+
+    async function loadMe() {
+      const res = await fetch("/api/me");
+      if (!res.ok) { window.location.href = "/login"; return; }
+      me = await res.json();
+      $("whoami").textContent = me.username + " (관리자)";
+    }
+
+    async function loadUsers() {
+      const tbody = $("userList");
+      try {
+        const res = await fetch("/api/users");
+        if (res.status === 401 || res.status === 403) { window.location.href = "/login"; return; }
+        const data = await res.json();
+        const rows = data.users || [];
+        if (!rows.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="6">사용자가 없습니다.</td></tr>'; return; }
+        tbody.innerHTML = rows.map(u => {
+          const roleBadge = u.role === "admin"
+            ? '<span class="badge admin">관리자</span>' : '<span class="badge">사용자</span>';
+          const stateBadge = u.enabled
+            ? '<span class="badge on">활성</span>' : '<span class="badge off">비활성</span>';
+          const isMe = me && u.username === me.username;
+          const toggleRole = u.role === "admin" ? "user" : "admin";
+          const roleBtn = '<button class="mini" data-act="role" data-id="' + u.id + '" data-role="' + toggleRole + '" data-en="' + (u.enabled ? 1 : 0) + '">' + (u.role === "admin" ? "사용자로" : "관리자로") + '</button>';
+          const enBtn = '<button class="mini" data-act="enable" data-id="' + u.id + '" data-role="' + u.role + '" data-en="' + (u.enabled ? 0 : 1) + '">' + (u.enabled ? "비활성화" : "활성화") + '</button>';
+          const pwBtn = '<button class="mini" data-act="pw" data-id="' + u.id + '" data-u="' + escapeHtml(u.username) + '">비밀번호</button>';
+          const delBtn = '<button class="mini danger" data-act="del" data-id="' + u.id + '" data-u="' + escapeHtml(u.username) + '">삭제</button>';
+          const actions = isMe ? '<span class="hint" style="margin:0">본인</span>' : (roleBtn + enBtn + pwBtn + delBtn);
+          return '<tr>' +
+            '<td>' + escapeHtml(u.username) + '</td>' +
+            '<td>' + roleBadge + '</td>' +
+            '<td>' + stateBadge + '</td>' +
+            '<td class="mono">' + fmtTime(u.created_at) + '</td>' +
+            '<td>' + escapeHtml(u.created_by || "—") + '</td>' +
+            '<td style="white-space:nowrap">' + actions + '</td>' +
+            '</tr>';
+        }).join("");
+        bindUserButtons();
+      } catch (_) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="6">목록을 불러오지 못했습니다.</td></tr>';
+      }
+    }
+
+    function bindUserButtons() {
+      document.querySelectorAll("#userList button[data-act]").forEach(b => {
+        b.addEventListener("click", async () => {
+          const id = parseInt(b.dataset.id, 10);
+          const act = b.dataset.act;
+          if (act === "del") {
+            if (!confirm("'" + b.dataset.u + "' 사용자를 삭제할까요?")) return;
+            const r = await postJson("/api/users/delete", { id });
+            if (!r.ok) { setMsg($("userMsg"), r.data.error || "삭제 실패", "err"); return; }
+            setMsg($("userMsg"), "삭제되었습니다.", "ok"); loadUsers();
+          } else if (act === "pw") {
+            const npw = prompt("'" + b.dataset.u + "'의 새 비밀번호(4자 이상):");
+            if (npw === null) return;
+            if (npw.length < 4) { setMsg($("userMsg"), "비밀번호는 4자 이상이어야 합니다.", "err"); return; }
+            const r = await postJson("/api/users/update", { id, new_password: npw });
+            if (!r.ok) { setMsg($("userMsg"), r.data.error || "변경 실패", "err"); return; }
+            setMsg($("userMsg"), "비밀번호가 변경되었습니다.", "ok");
+          } else if (act === "role") {
+            const r = await postJson("/api/users/update", { id, role: b.dataset.role, enabled: b.dataset.en === "1" });
+            if (!r.ok) { setMsg($("userMsg"), r.data.error || "변경 실패", "err"); return; }
+            setMsg($("userMsg"), "권한이 변경되었습니다.", "ok"); loadUsers();
+          } else if (act === "enable") {
+            const r = await postJson("/api/users/update", { id, role: b.dataset.role, enabled: b.dataset.en === "1" });
+            if (!r.ok) { setMsg($("userMsg"), r.data.error || "변경 실패", "err"); return; }
+            setMsg($("userMsg"), "상태가 변경되었습니다.", "ok"); loadUsers();
+          }
+        });
+      });
+    }
+
+    $("addUser").addEventListener("click", async () => {
+      const username = $("nu").value.trim();
+      const password = $("np").value;
+      const role = $("nr").value;
+      if (!username || !password) { setMsg($("userMsg"), "아이디와 비밀번호를 입력해주세요.", "err"); return; }
+      const r = await postJson("/api/users", { username, password, role });
+      if (!r.ok) { setMsg($("userMsg"), r.data.error || "등록 실패", "err"); return; }
+      $("nu").value = ""; $("np").value = ""; $("nr").value = "user";
+      setMsg($("userMsg"), "등록되었습니다.", "ok"); loadUsers();
+    });
+
+    async function loadHistory() {
+      const tbody = $("histList");
+      try {
+        const res = await fetch("/api/login-history");
+        if (res.status === 401 || res.status === 403) { window.location.href = "/login"; return; }
+        const data = await res.json();
+        const rows = data.history || [];
+        if (!rows.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="5">이력이 없습니다.</td></tr>'; return; }
+        tbody.innerHTML = rows.map(h => {
+          const result = h.success
+            ? '<span class="badge ok2">성공</span>' : '<span class="badge fail">실패</span>';
+          return '<tr>' +
+            '<td class="mono">' + fmtTime(h.created_at) + '</td>' +
+            '<td>' + escapeHtml(h.username) + '</td>' +
+            '<td>' + result + '</td>' +
+            '<td class="mono">' + escapeHtml(h.ip || "—") + '</td>' +
+            '<td class="hint" style="margin:0;max-width:280px;word-break:break-all">' + escapeHtml(h.user_agent || "—") + '</td>' +
+            '</tr>';
+        }).join("");
+      } catch (_) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">이력을 불러오지 못했습니다.</td></tr>';
+      }
+    }
+
+    // ===== IP 차단 =====
+    async function loadIps() {
+      const tbody = $("ipList");
+      try {
+        const res = await fetch("/api/login-ips");
+        if (res.status === 401 || res.status === 403) { window.location.href = "/login"; return; }
+        const data = await res.json();
+        $("myIp").textContent = data.my_ip || "";
+        const rows = data.ips || [];
+        if (!rows.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="8">접속 이력이 없습니다.</td></tr>'; return; }
+        tbody.innerHTML = rows.map(r => {
+          let state;
+          if (r.blocked) state = '<span class="badge off">차단됨</span>';
+          else if (r.is_loopback) state = '<span class="badge">로컬</span>';
+          else if (r.is_self) state = '<span class="badge on">현재 접속</span>';
+          else state = '<span class="badge ok2">허용</span>';
+          let action = "";
+          if (r.blocked) {
+            action = '<button class="mini" data-act="unblock" data-ip="' + escapeHtml(r.ip) + '">차단 해제</button>';
+          } else if (!r.is_self && !r.is_loopback) {
+            action = '<button class="mini danger" data-act="block" data-ip="' + escapeHtml(r.ip) + '">차단</button>';
+          } else {
+            action = '<span class="hint" style="margin:0">—</span>';
+          }
+          const reason = r.blocked && r.reason ? ' <span class="hint" style="margin:0">(' + escapeHtml(r.reason) + ')</span>' : '';
+          return '<tr>' +
+            '<td class="mono">' + escapeHtml(r.ip) + '</td>' +
+            '<td>' + r.attempts + '</td>' +
+            '<td>' + r.successes + '</td>' +
+            '<td>' + r.fails + '</td>' +
+            '<td class="mono">' + (r.last_at ? fmtTime(r.last_at) : "—") + '</td>' +
+            '<td>' + escapeHtml(r.usernames || "—") + '</td>' +
+            '<td>' + state + reason + '</td>' +
+            '<td style="white-space:nowrap">' + action + '</td>' +
+            '</tr>';
+        }).join("");
+        bindIpButtons();
+      } catch (_) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="8">목록을 불러오지 못했습니다.</td></tr>';
+      }
+    }
+
+    function bindIpButtons() {
+      document.querySelectorAll("#ipList button[data-act]").forEach(b => {
+        b.addEventListener("click", async () => {
+          const ip = b.dataset.ip;
+          if (b.dataset.act === "block") {
+            if (!confirm("'" + ip + "' 을(를) 차단할까요? 해당 IP의 접속이 모두 차단됩니다.")) return;
+            const r = await postJson("/api/blacklist", { ip });
+            if (!r.ok) { setMsg($("ipMsg"), r.data.error || "차단 실패", "err"); return; }
+            setMsg($("ipMsg"), ip + " 을(를) 차단했습니다.", "ok"); loadIps();
+          } else if (b.dataset.act === "unblock") {
+            const r = await postJson("/api/blacklist/delete", { ip });
+            if (!r.ok) { setMsg($("ipMsg"), r.data.error || "해제 실패", "err"); return; }
+            setMsg($("ipMsg"), ip + " 차단을 해제했습니다.", "ok"); loadIps();
+          }
+        });
+      });
+    }
+
+    $("addBlock").addEventListener("click", async () => {
+      const ip = $("bip").value.trim();
+      const reason = $("breason").value.trim();
+      if (!ip) { setMsg($("ipMsg"), "차단할 IP 주소를 입력해주세요.", "err"); return; }
+      const r = await postJson("/api/blacklist", { ip, reason });
+      if (!r.ok) { setMsg($("ipMsg"), r.data.error || "차단 실패", "err"); return; }
+      $("bip").value = ""; $("breason").value = "";
+      setMsg($("ipMsg"), ip + " 을(를) 차단했습니다.", "ok"); loadIps();
+    });
+
+    $("changePw").addEventListener("click", async () => {
+      const current_password = $("cpw").value;
+      const new_password = $("npw").value;
+      if (!current_password || new_password.length < 4) {
+        setMsg($("meMsg"), "현재 비밀번호와 4자 이상의 새 비밀번호를 입력해주세요.", "err"); return;
+      }
+      const r = await postJson("/api/change-password", { current_password, new_password });
+      if (!r.ok) { setMsg($("meMsg"), r.data.error || "변경 실패", "err"); return; }
+      $("cpw").value = ""; $("npw").value = "";
+      setMsg($("meMsg"), "비밀번호가 변경되었습니다.", "ok");
+    });
+
+    $("logout").addEventListener("click", async (e) => {
+      e.preventDefault();
+      await postJson("/api/logout", {});
+      window.location.href = "/login";
+    });
+
+    (async () => { await loadMe(); await loadUsers(); })();
+  </script>
+</body>
+</html>

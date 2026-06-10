@@ -79,7 +79,9 @@
 <body>
   <header>
     <h1>질의 폴더 등록</h1>
-    <a class="back" href="/">← 채팅으로</a>
+    <a class="back" href="/admin" style="margin-left:auto">👤 사용자 관리</a>
+    <a class="back" href="/" style="margin-left:18px">← 채팅으로</a>
+    <a class="back" href="#" id="logout" style="margin-left:18px">로그아웃</a>
   </header>
 
   <div class="wrap">
@@ -334,6 +336,17 @@
 
     $("add").addEventListener("click", save);
     $("cancelEdit").addEventListener("click", cancelEdit);
+    $("logout").addEventListener("click", async (e) => {
+      e.preventDefault();
+      try {
+        await fetch("/api/logout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-App-Token": APP_TOKEN },
+          body: "{}",
+        });
+      } catch (_) {}
+      window.location.href = "/login";
+    });
     loadList();
   </script>
 </body>
