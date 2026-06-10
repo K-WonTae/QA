@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>질의 폴더 등록</title>
+  <style>
+    :root {
+      --bg: #0f1419; --panel: #1a212b; --panel-2: #222b37; --border: #2c3744;
+      --text: #e6edf3; --muted: #8b97a6; --accent: #3b82f6; --accent-2: #2563eb;
+      --danger: #ef4444; --ok: #22c55e;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+      background: var(--bg); color: var(--text); min-height: 100vh;
+    }
+    header {
+      display: flex; align-items: center; gap: 12px; padding: 14px 20px;
+      background: var(--panel); border-bottom: 1px solid var(--border);
+    }
+    header h1 { font-size: 16px; font-weight: 700; margin: 0; }
+    header a.back { margin-left: auto; font-size: 13px; color: var(--accent); text-decoration: none; }
+    header a.back:hover { text-decoration: underline; }
+    .wrap { max-width: 820px; margin: 0 auto; padding: 24px 16px 60px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 18px 18px; margin-bottom: 22px;
+    }
+    .card h2 { font-size: 14px; margin: 0 0 14px; color: #fff; }
+    label { display: block; font-size: 12.5px; color: var(--muted); margin: 12px 0 5px; }
+    input[type=text], select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--text); font-size: 14px; padding: 9px 11px;
+      font-family: inherit;
+    }
+    input[type=text]:focus, select:focus { outline: none; border-color: var(--accent); }
+    .suffixes { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 6px; }
+    .suffixes label { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text); font-size: 13.5px; cursor: pointer; }
+    .linkbox {
+      gap: 8px 16px; margin-top: 6px; max-height: 156px; overflow-y: auto;
+      border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--bg);
+    }
+    .linkbox .chip { margin-right: 2px; }
+    .link-none { color: var(--muted); font-size: 12.5px; }
+    .row2 { display: flex; gap: 12px; }
+    .row2 > div { flex: 1; }
+    .actions { margin-top: 16px; display: flex; align-items: center; gap: 10px; }
+    button.primary {
+      border: none; border-radius: 9px; cursor: pointer; background: var(--accent-2);
+      color: #fff; font-size: 14px; font-weight: 600; padding: 9px 18px;
+    }
+    button.primary:hover { background: var(--accent); }
+    .msg { font-size: 13px; min-height: 18px; }
+    .msg.err { color: var(--danger); }
+    .msg.ok { color: var(--ok); }
+    .hint { font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; }
+    td.path { color: #b8c2cf; word-break: break-all; }
+    .chip {
+      background: rgba(59,130,246,.15); border: 1px solid rgba(59,130,246,.4);
+      color: #93c5fd; border-radius: 6px; padding: 1px 8px; font-size: 12.5px; font-weight: 600;
+    }
+    .badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border);
+      border-radius: 5px; padding: 1px 6px; }
+    button.del {
+      border: 1px solid var(--border); background: var(--panel-2); color: #f3b4b4;
+      border-radius: 7px; padding: 4px 10px; font-size: 12.5px; cursor: pointer;
+    }
+    button.del:hover { border-color: var(--danger); color: #fff; background: var(--danger); }
+    button.del:disabled { opacity: .35; cursor: default; }
+    .empty-row td { color: var(--muted); text-align: center; padding: 18px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>질의 폴더 등록</h1>
+    <a class="back" href="/">← 채팅으로</a>
+  </header>
+
+  <div class="wrap">
+    <div class="card">
+      <h2 id="formTitle">새 폴더 등록</h2>
+      <div class="row2">
+        <div>
+          <label for="delimiter">구분자</label>
+          <input type="text" id="delimiter" placeholder="@학사" autocomplete="off" />
+          <div class="hint">기존 호환용 구분자입니다. 채팅 화면에서는 드롭다운으로 선택합니다.</div>
+        </div>
+        <div>
+          <label for="label">이름(라벨)</label>
+          <input type="text" id="label" placeholder="학사 업무자료" autocomplete="off" />
+        </div>
+      </div>
+
+      <label for="division">분기</label>
+      <input type="text" id="division" list="division-list" placeholder="학사" value="학사" autocomplete="off" />
+      <datalist id="division-list">
+        <option value="학사"></option>
+        <option value="행정"></option>
+      </datalist>
+      <div class="hint">분기를 직접 입력하거나, 기존에 쓴 분기에서 골라도 됩니다. 비우면 '학사'로 등록됩니다.</div>
+
+      <label for="root_path">폴더 경로</label>
+      <input type="text" id="root_path" placeholder="D:\DeskList\업무\학사" autocomplete="off" />
+      <div class="hint">실재하는 폴더여야 합니다. 하위 폴더까지 모두 검색합니다.</div>
+
+      <label>읽을 확장자</label>
+      <div class="suffixes" id="suffixes">
+        <label><input type="checkbox" value=".md" checked /> .md</label>
+        <label><input type="checkbox" value=".txt" checked /> .txt</label>
+        <label><input type="checkbox" value=".csv" checked /> .csv</label>
+        <label><input type="checkbox" value=".sql" checked /> .sql</label>
+        <label><input type="checkbox" value=".pdf" /> .pdf</label>
+      </div>
+      <div class="hint">텍스트형(md·txt·csv·sql)과 <b>.pdf</b>(본문 자동 추출)를 지원합니다. xlsx·hwp는 추후 추가 예정.</div>
+
+      <label>연계 출처 <span style="color:var(--muted);font-weight:400">(선택)</span></label>
+      <div class="suffixes linkbox" id="linkBox">
+        <div class="hint" style="margin-top:0">불러오는 중…</div>
+      </div>
+      <div class="hint">여기서 고른 폴더는 <b>이 폴더로 질문할 때마다 함께 검색</b>됩니다.
+        (예: ‘학사’에 ‘규정’을 연계하면, 학사로 물어도 규정 문서까지 같이 근거로 씁니다.)
+        규정처럼 PDF를 실시간으로 받는 출처를 연계하면 매 질문이 느려질 수 있습니다.</div>
+
+      <div class="actions">
+        <button class="primary" id="add">등록</button>
+        <button id="cancelEdit" style="display:none;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:9px;padding:9px 16px;font-size:14px;cursor:pointer;font-family:inherit">취소</button>
+        <span class="msg" id="msg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>등록된 폴더</h2>
+      <table>
+        <thead>
+          <tr><th>분기</th><th>구분자</th><th>이름</th><th>경로</th><th>확장자</th><th>연계</th><th></th></tr>
+        </thead>
+        <tbody id="list">
+          <tr class="empty-row"><td colspan="7">불러오는 중…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const APP_TOKEN = "__APP_TOKEN__";
+    const $ = (id) => document.getElementById(id);
+    const msgEl = $("msg");
+    let currentRows = [];
+    let editingId = null;
+    const DEFAULT_SUFFIXES = [".md", ".txt", ".csv", ".sql"];
+
+    function setMsg(text, kind) {
+      msgEl.textContent = text || "";
+      msgEl.className = "msg" + (kind ? " " + kind : "");
+    }
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    async function loadList() {
+      const tbody = $("list");
+      try {
+        const res = await fetch("/api/sources");
+        const data = await res.json();
+        const rows = (data.sources || []);
+        // 분기 자동완성 목록을 기존 등록값으로 갱신(직접 입력은 그대로 가능)
+        const dl = $("division-list");
+        if (dl) {
+          const divs = new Set(["학사", "행정"]);
+          rows.forEach(s => { if (s.division) divs.add(s.division); });
+          dl.innerHTML = Array.from(divs).map(d => '<option value="' + escapeHtml(d) + '"></option>').join("");
+        }
+        currentRows = rows;
+        if (!rows.length) {
+          tbody.innerHTML = '<tr class="empty-row"><td colspan="7">등록된 폴더가 없습니다.</td></tr>';
+          renderLinkOptions(editingId, []);
+          return;
+        }
+        const byId = new Map(rows.map(s => [s.id, s]));
+        const editStyle = "border:1px solid var(--border);background:var(--panel-2);color:#cdd6e4;border-radius:7px;padding:4px 11px;font-size:12.5px;cursor:pointer;margin-right:6px;font-family:inherit";
+        tbody.innerHTML = rows.map(s => {
+          const def = s.is_default ? ' <span class="badge">기본</span>' : '';
+          const kindBadge = s.kind === 'pdf_index' ? ' <span class="badge">PDF 실시간</span>' : '';
+          const editBtn = '<button class="edit" data-id="' + s.id + '" style="' + editStyle + '">수정</button>';
+          const delBtn = '<button class="del" data-id="' + s.id + '">삭제</button>';
+          const sfx = s.kind === 'pdf_index' ? '링크 PDF 분석' : escapeHtml(s.suffixes);
+          const links = (s.linked_ids || [])
+            .map(id => byId.get(id))
+            .filter(Boolean)
+            .map(t => '<span class="chip">' + escapeHtml(t.delimiter) + '</span>')
+            .join(' ');
+          const linkCell = links || '<span class="link-none">—</span>';
+          return '<tr>' +
+            '<td><span class="badge">' + escapeHtml(s.division || "학사") + '</span></td>' +
+            '<td><span class="chip">' + escapeHtml(s.delimiter) + '</span>' + def + kindBadge + '</td>' +
+            '<td>' + escapeHtml(s.label) + '</td>' +
+            '<td class="path">' + escapeHtml(s.root_path) + '</td>' +
+            '<td>' + sfx + '</td>' +
+            '<td>' + linkCell + '</td>' +
+            '<td style="white-space:nowrap">' + editBtn + delBtn + '</td>' +
+            '</tr>';
+        }).join("");
+        // 폼의 연계 체크박스도 현재 등록 목록 기준으로 다시 그린다.
+        const editingRow = editingId !== null ? currentRows.find(r => r.id === editingId) : null;
+        renderLinkOptions(editingId, editingRow ? (editingRow.linked_ids || []) : []);
+        tbody.querySelectorAll("button.edit[data-id]").forEach(b => {
+          b.addEventListener("click", () => startEdit(parseInt(b.dataset.id, 10)));
+        });
+        tbody.querySelectorAll("button.del[data-id]").forEach(b => {
+          b.addEventListener("click", () => del(parseInt(b.dataset.id, 10)));
+        });
+      } catch (_) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="7">목록을 불러오지 못했습니다.</td></tr>';
+      }
+    }
+
+    function renderLinkOptions(excludeId, checkedIds) {
+      const box = $("linkBox");
+      if (!box) return;
+      const checked = new Set(checkedIds || []);
+      const others = currentRows.filter(s => s.id !== excludeId);
+      if (!others.length) {
+        box.innerHTML = '<div class="hint" style="margin:0">연계할 다른 폴더가 없습니다. 폴더를 2개 이상 등록하면 서로 연계할 수 있습니다.</div>';
+        return;
+      }
+      box.innerHTML = others.map(s =>
+        '<label><input type="checkbox" class="link-cb" value="' + s.id + '"' +
+        (checked.has(s.id) ? ' checked' : '') + ' /> ' +
+        '<span class="chip">' + escapeHtml(s.delimiter) + '</span> ' + escapeHtml(s.label) + '</label>'
+      ).join("");
+    }
+
+    function getCheckedLinkIds() {
+      return Array.from(document.querySelectorAll(".link-cb:checked"))
+        .map(c => parseInt(c.value, 10))
+        .filter(n => Number.isInteger(n));
+    }
+
+    function setSuffixChecks(list) {
+      const set = new Set(list);
+      $("suffixes").querySelectorAll("input").forEach(c => { c.checked = set.has(c.value); });
+    }
+
+    function startEdit(id) {
+      const s = currentRows.find(r => r.id === id);
+      if (!s) return;
+      editingId = id;
+      $("delimiter").value = s.delimiter;
+      $("label").value = s.label;
+      $("division").value = s.division || "학사";
+      $("root_path").value = s.root_path;
+      setSuffixChecks((s.suffixes || "").split(",").filter(Boolean));
+      renderLinkOptions(id, s.linked_ids || []);
+      $("formTitle").textContent = "폴더 수정 — " + s.label;
+      $("add").textContent = "수정 저장";
+      $("cancelEdit").style.display = "";
+      setMsg("수정할 내용을 바꾼 뒤 '수정 저장'을 누르세요.", "");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function resetForm() {
+      editingId = null;
+      $("delimiter").value = ""; $("label").value = "";
+      $("division").value = "학사"; $("root_path").value = "";
+      setSuffixChecks(DEFAULT_SUFFIXES);
+      renderLinkOptions(null, []);
+      $("formTitle").textContent = "새 폴더 등록";
+      $("add").textContent = "등록";
+      $("cancelEdit").style.display = "none";
+    }
+
+    function cancelEdit() { resetForm(); setMsg(""); }
+
+    async function save() {
+      const delimiter = $("delimiter").value.trim();
+      const label = $("label").value.trim();
+      const division = $("division").value.trim();
+      const root_path = $("root_path").value.trim();
+      const suffixes = Array.from($("suffixes").querySelectorAll("input:checked")).map(c => c.value);
+      if (!delimiter || !label || !root_path) { setMsg("구분자·이름·폴더 경로를 모두 입력해주세요.", "err"); return; }
+      if (!suffixes.length) { setMsg("확장자를 하나 이상 선택해주세요.", "err"); return; }
+
+      const linked_ids = getCheckedLinkIds();
+      const editing = editingId !== null;
+      const url = editing ? "/api/sources/update" : "/api/sources";
+      const body = editing
+        ? { id: editingId, delimiter, label, division, root_path, suffixes, linked_ids }
+        : { delimiter, label, division, root_path, suffixes, linked_ids };
+      setMsg(editing ? "수정 중…" : "등록 중…", "");
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-App-Token": APP_TOKEN },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { setMsg(data.error || "처리에 실패했습니다.", "err"); return; }
+        const okMsg = editing ? "수정되었습니다." : "등록되었습니다.";
+        resetForm();
+        setMsg(okMsg, "ok");
+        loadList();
+      } catch (_) {
+        setMsg("네트워크 오류가 발생했습니다.", "err");
+      }
+    }
+
+    async function del(id) {
+      const s = currentRows.find(r => r.id === id);
+      const name = s ? s.label : "";
+      if (!confirm("'" + name + "' 폴더 등록을 삭제할까요?")) return;
+      try {
+        const res = await fetch("/api/sources/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-App-Token": APP_TOKEN },
+          body: JSON.stringify({ id }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { setMsg(data.error || "삭제에 실패했습니다.", "err"); return; }
+        if (id === editingId) resetForm();
+        setMsg("삭제되었습니다.", "ok");
+        loadList();
+      } catch (_) {
+        setMsg("네트워크 오류가 발생했습니다.", "err");
+      }
+    }
+
+    $("add").addEventListener("click", save);
+    $("cancelEdit").addEventListener("click", cancelEdit);
+    loadList();
+  </script>
+</body>
+</html>

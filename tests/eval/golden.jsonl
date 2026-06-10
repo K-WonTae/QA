@@ -1,0 +1,6 @@
+{"id":"tbl_list","source":"@테이블","question":"등록된 테이블 종류를 간단히 알려줘","expect_intent":"inventory","must_include":["테이블"],"must_not":["테이블 없음","존재하지 않"],"must_cite":["학사/테이블/index.md","행정/테이블/index.md"]}
+{"id":"sh02_content","source":"@테이블","question":"장학세부분류 코드값이 뭐가 있는지 설명해줘","expect_intent":"content","must_include":["H0201","성적우수"],"must_not":["근거를 찾지 못"],"must_cite":["장학세부분류(SH02)"]}
+{"id":"reg_content","source":"@규정","question":"학칙에서 정하는 수업연한은 어떻게 되나요?","expect_intent":"content","must_include":["수업연한"],"must_not":["근거를 찾지 못"],"must_cite":["학칙"]}
+{"id":"knowledge_content","source":"@테이블","question":"등록구분 코드가 뭐야?","expect_intent":"content","must_include":["등록구분"],"must_not":["근거를 찾지 못"],"must_cite":["등록구분(SI01)"]}
+{"id":"followup_multi","source":"@테이블","question":"장학구분과 장학세부분류는 어떻게 다른지 알려줘","expect_intent":"content","must_include":["장학구분","장학세부분류"],"must_not":["근거를 찾지 못"],"must_cite":["장학"]}
+{"id":"a_false_positive_guard","source":"@테이블","question":"장학세부분류 코드값이 뭐가 있는지 알려줘","expect_intent":"content","must_include":["성적우수"],"must_not":["문서/테이블 목록"],"must_cite":["장학세부분류(SH02)"]}

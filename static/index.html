@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>업무 문서 Q&A</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a212b;
+      --panel-2: #222b37;
+      --border: #2c3744;
+      --text: #e6edf3;
+      --muted: #8b97a6;
+      --accent: #3b82f6;
+      --accent-2: #2563eb;
+      --user-bubble: #2563eb;
+      --assistant-bubble: #222b37;
+      --danger: #ef4444;
+      --ok: #22c55e;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* 헤더 */
+    header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 14px 20px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    header .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+    header h1 { font-size: 16px; font-weight: 700; margin: 0; }
+    header .sub { font-size: 12px; color: var(--muted); margin-left: auto; }
+    header a.manage { font-size: 13px; color: var(--accent); text-decoration: none; margin-left: 16px; }
+    header a.manage:hover { text-decoration: underline; }
+    header .hbtn {
+      margin-left: 14px; background: var(--panel-2); border: 1px solid var(--border);
+      color: #cbd5e1; border-radius: 8px; padding: 5px 11px; font-size: 12.5px;
+      font-family: inherit; cursor: pointer;
+    }
+    header .hbtn:hover { border-color: var(--accent); color: #fff; }
+    header .sub { margin-left: auto; }
+
+    /* 이력 서랍 */
+    .drawer-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.5); opacity: 0; pointer-events: none;
+      transition: opacity .18s; z-index: 40;
+    }
+    .drawer-overlay.open { opacity: 1; pointer-events: auto; }
+    .drawer {
+      position: fixed; top: 0; left: 0; height: 100%; width: 320px; max-width: 85vw;
+      background: var(--panel); border-right: 1px solid var(--border);
+      transform: translateX(-100%); transition: transform .2s; z-index: 41;
+      display: flex; flex-direction: column;
+    }
+    .drawer.open { transform: translateX(0); }
+    .drawer-head {
+      display: flex; align-items: center; gap: 8px; padding: 14px 16px;
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .drawer-head h3 { font-size: 14px; margin: 0; }
+    .drawer-head .close { margin-left: auto; background: none; border: none; color: var(--muted);
+      font-size: 18px; cursor: pointer; }
+    .drawer-head .close:hover { color: #fff; }
+    .hist-list { flex: 1; overflow-y: auto; padding: 8px; }
+    .hist-item {
+      position: relative; padding: 10px 30px 10px 11px; border-radius: 9px; cursor: pointer;
+      border: 1px solid transparent; margin-bottom: 4px;
+    }
+    .hist-item:hover { background: var(--panel-2); }
+    .hist-item.active { background: var(--panel-2); border-color: rgba(59,130,246,.4); }
+    .hist-title { font-size: 13px; color: var(--text); line-height: 1.4;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .hist-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .hist-del {
+      position: absolute; top: 8px; right: 6px; background: none; border: none;
+      color: #5b6573; font-size: 13px; cursor: pointer; padding: 2px 5px; border-radius: 5px;
+    }
+    .hist-item:hover .hist-del { color: #f3b4b4; }
+    .hist-del:hover { background: var(--danger); color: #fff; }
+    .hist-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 24px 10px; }
+    /* 되묻기(출처 선택) 칩 */
+    .ask-source { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .src-chip {
+      background: var(--panel-2); border: 1px solid var(--border); color: #93c5fd;
+      border-radius: 8px; padding: 5px 11px; font-size: 13px; cursor: pointer;
+    }
+    .src-chip:hover { border-color: var(--accent); background: rgba(59,130,246,.15); }
+    .src-chip b { color: #fff; }
+
+    /* 대화 영역 */
+    #log {
+      flex: 1; overflow-y: auto;
+      padding: 24px 16px;
+      display: flex; flex-direction: column; gap: 18px;
+    }
+    .turn { max-width: 820px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; }
+    .turn.user { align-items: flex-end; }
+    .turn.assistant { align-items: flex-start; }
+
+    .bubble {
+      max-width: 86%;
+      padding: 12px 16px;
+      border-radius: 14px;
+      line-height: 1.65;
+      font-size: 14.5px;
+      word-break: break-word;
+      white-space: normal;
+    }
+    .turn.user .bubble {
+      background: var(--user-bubble);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+      white-space: pre-wrap;
+    }
+    .turn.assistant .bubble {
+      background: var(--assistant-bubble);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+    .role {
+      font-size: 11.5px; color: var(--muted);
+      margin-bottom: 5px; font-weight: 600; letter-spacing: .3px;
+    }
+    .meta {
+      font-size: 11.5px; color: var(--muted);
+      margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--border);
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    }
+    .tag {
+      background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 1px 7px; font-size: 11px; color: #b8c2cf;
+    }
+    .tag.cat { background: rgba(59,130,246,.15); border-color: rgba(59,130,246,.4); color: #93c5fd; }
+
+    /* 답변 마크다운 서식 */
+    .bubble h3 { font-size: 15px; margin: 14px 0 6px; color: #fff; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+    .bubble h4 { font-size: 14px; margin: 12px 0 5px; color: #cbd5e1; }
+    .bubble h3:first-child, .bubble h4:first-child { margin-top: 0; }
+    .bubble p { margin: 7px 0; }
+    .bubble ul { margin: 6px 0; padding-left: 20px; }
+    .bubble li { margin: 3px 0; }
+    .bubble strong { color: #fff; font-weight: 700; }
+    .bubble code {
+      background: #0d1117; border: 1px solid var(--border);
+      border-radius: 5px; padding: 1px 6px; font-size: 12.5px;
+      font-family: "Cascadia Code", Consolas, monospace; color: #7ee787;
+    }
+    .cursor { display: inline-block; width: 7px; height: 15px; background: var(--accent);
+      margin-left: 1px; vertical-align: text-bottom; animation: blink 1s steps(2) infinite; border-radius: 1px; }
+    @keyframes blink { 50% { opacity: 0; } }
+    .status-line { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 7px; }
+    .spinner { width: 13px; height: 13px; border: 2px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* 빈 화면 안내 */
+    .empty { margin: auto; text-align: center; color: var(--muted); max-width: 460px; }
+    .empty h2 { color: var(--text); font-size: 18px; margin-bottom: 8px; }
+    .examples { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+    .example {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 11px 14px; font-size: 13.5px; cursor: pointer; text-align: left; color: #cbd5e1;
+      transition: border-color .15s, background .15s;
+    }
+    .example:hover { border-color: var(--accent); background: var(--panel-2); }
+
+    /* 입력 영역 */
+    .composer-wrap { flex-shrink: 0; padding: 12px 16px 16px; background: var(--bg); border-top: 1px solid var(--border); }
+    .composer { max-width: 820px; margin: 0 auto; }
+    .input-row {
+      display: flex; align-items: flex-end; gap: 8px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 8px 8px 8px 14px;
+    }
+    .input-row:focus-within { border-color: var(--accent); }
+    textarea {
+      flex: 1; background: transparent; border: none; outline: none; resize: none;
+      color: var(--text); font-size: 14.5px; line-height: 1.5; font-family: inherit;
+      max-height: 180px; padding: 6px 0;
+    }
+    textarea::placeholder { color: #5b6573; }
+    select.source-select {
+      flex-shrink: 0; max-width: 210px; height: 38px;
+      background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+      border-radius: 10px; padding: 0 10px; font-size: 13px; font-family: inherit;
+      outline: none;
+    }
+    select.source-select:focus { border-color: var(--accent); }
+    button.send {
+      flex-shrink: 0; border: none; border-radius: 10px; cursor: pointer;
+      background: var(--accent-2); color: #fff; font-size: 14px; font-weight: 600;
+      height: 38px; padding: 0 16px; transition: background .15s;
+    }
+    button.send:hover { background: var(--accent); }
+    button.send.stop { background: var(--danger); }
+    button.send:disabled { background: #374151; color: #6b7280; cursor: default; }
+    .hint { text-align: center; font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+    .hint kbd {
+      background: var(--panel-2); border: 1px solid var(--border); border-bottom-width: 2px;
+      border-radius: 4px; padding: 1px 5px; font-size: 10.5px; font-family: inherit; color: #cbd5e1;
+    }
+  </style>
+
+  <!-- ===== 리디자인 보강 테마 (뒤에 정의되어 우선 적용) ===== -->
+  <style>
+    :root {
+      --bg: #0a0c11;
+      --panel: #0f131b;
+      --panel-2: #161c27;
+      --border: #222a38;
+      --border-soft: #1a212c;
+      --text: #eaeff7;
+      --muted: #8b97aa;
+      --accent: #5b86ff;
+      --accent-2: #3f66f0;
+      --user-bubble: #3f66f0;
+      --assistant-bubble: #121823;
+      --danger: #f05252;
+      --ok: #2bd07a;
+      --radius: 14px;
+      --shadow: 0 6px 24px rgba(0,0,0,.32);
+    }
+    body {
+      font-family: "Pretendard", "Inter", -apple-system, "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+      background:
+        radial-gradient(900px 500px at 80% -10%, rgba(91,134,255,.10), transparent 60%),
+        radial-gradient(700px 500px at -10% 110%, rgba(63,102,240,.08), transparent 55%),
+        var(--bg);
+    }
+
+    /* 헤더 */
+    header {
+      padding: 12px 22px;
+      background: rgba(15,19,27,.82);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border-soft);
+    }
+    header .dot {
+      width: 26px; height: 26px; border-radius: 8px; background: linear-gradient(135deg, #5b86ff, #8b5bff);
+      box-shadow: 0 2px 10px rgba(91,134,255,.45); position: relative;
+    }
+    header .dot::after { content: "Q"; position: absolute; inset: 0; display: grid; place-items: center;
+      font-size: 14px; font-weight: 800; color: #fff; }
+    header h1 { font-size: 15.5px; font-weight: 700; letter-spacing: -.2px; }
+    header .sub { font-size: 11.5px; color: var(--muted); }
+    header .hbtn {
+      margin-left: 10px; background: var(--panel-2); border: 1px solid var(--border);
+      color: #cdd6e4; border-radius: 9px; padding: 7px 12px; font-size: 12.5px; font-weight: 500;
+      transition: all .15s;
+    }
+    header .hbtn:hover { border-color: var(--accent); color: #fff; background: #1b2330; transform: translateY(-1px); }
+    header a.manage {
+      margin-left: 10px; font-size: 12.5px; color: #fff; font-weight: 600; text-decoration: none;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2)); padding: 7px 13px; border-radius: 9px;
+      box-shadow: 0 2px 10px rgba(63,102,240,.35); transition: all .15s;
+    }
+    header a.manage:hover { text-decoration: none; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(63,102,240,.5); }
+
+    /* 대화 영역 */
+    #log { padding: 30px 18px 12px; gap: 22px; scroll-behavior: smooth; }
+    .turn { max-width: 860px; gap: 0; }
+    .turn .role { display: flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 600;
+      color: var(--muted); letter-spacing: 0; margin-bottom: 7px; }
+    .turn .role::before {
+      content: ""; width: 24px; height: 24px; border-radius: 8px; flex-shrink: 0;
+      background-size: cover; box-shadow: 0 1px 6px rgba(0,0,0,.3);
+    }
+    .turn.assistant .role { color: #aebbcf; }
+    .turn.assistant .role::before { background: linear-gradient(135deg, #5b86ff, #8b5bff); }
+    .turn.user .role { flex-direction: row-reverse; color: #93a4c4; }
+    .turn.user .role::before { background: linear-gradient(135deg, #3f66f0, #2b3fae); }
+
+    .bubble {
+      max-width: 100%; padding: 14px 17px; border-radius: 16px; font-size: 14.5px; line-height: 1.7;
+      box-shadow: 0 1px 2px rgba(0,0,0,.18);
+    }
+    .turn.assistant .bubble {
+      background: linear-gradient(180deg, #141b27, #111722);
+      border: 1px solid var(--border); border-bottom-left-radius: 5px;
+    }
+    .turn.user .bubble {
+      background: linear-gradient(135deg, #3f66f0, #3556d8); border-bottom-right-radius: 5px;
+      box-shadow: 0 4px 16px rgba(63,102,240,.28);
+    }
+
+    .bubble h3 { font-size: 15.5px; font-weight: 700; margin: 16px 0 8px; color: #fff;
+      padding-bottom: 6px; border-bottom: 1px solid var(--border); letter-spacing: -.2px; }
+    .bubble h4 { font-size: 14px; font-weight: 650; margin: 13px 0 6px; color: #c5d1e4; }
+    .bubble h3:first-child, .bubble h4:first-child { margin-top: 2px; }
+    .bubble p { margin: 8px 0; }
+    .bubble ul { margin: 8px 0; padding-left: 20px; }
+    .bubble li { margin: 4px 0; }
+    .bubble li::marker { color: var(--accent); }
+    .bubble strong { color: #fff; }
+    .bubble code {
+      background: #0b0f16; border: 1px solid var(--border); border-radius: 6px;
+      padding: 1.5px 6px; font-size: 12.5px; color: #8ce0a6;
+      font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    }
+
+    /* 코드블록 (SQL 등) */
+    .bubble pre {
+      background: #080b11; border: 1px solid var(--border); border-radius: 12px;
+      padding: 14px 16px; margin: 12px 0; overflow-x: auto; position: relative;
+    }
+    .bubble pre code {
+      background: none; border: none; padding: 0; color: #d3deee; font-size: 12.5px;
+      line-height: 1.6; white-space: pre; display: block;
+    }
+
+    /* 표 */
+    .tbl-wrap { margin: 12px 0; overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; }
+    .bubble table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    .bubble thead th {
+      background: #1a2230; color: #dbe4f1; font-weight: 650; text-align: left;
+      padding: 10px 13px; border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    .bubble tbody td { padding: 9px 13px; border-bottom: 1px solid var(--border-soft); color: #c7d2e3; vertical-align: top; }
+    .bubble tbody tr:last-child td { border-bottom: none; }
+    .bubble tbody tr:nth-child(even) { background: rgba(255,255,255,.018); }
+    .bubble tbody tr:hover { background: rgba(91,134,255,.07); }
+
+    .meta { border-top: 1px solid var(--border-soft); margin-top: 10px; padding-top: 9px; }
+    .tag { background: #131a25; border: 1px solid var(--border); border-radius: 7px; color: #aab6c8; }
+    .tag.cat { background: rgba(91,134,255,.14); border-color: rgba(91,134,255,.4); color: #aec2ff; font-weight: 600; }
+
+    /* 참고 문서 패널 (F-1) */
+    .sources-panel { margin-top: 10px; padding: 9px 11px; border: 1px solid var(--border-soft);
+      border-radius: 10px; background: rgba(255,255,255,.02); }
+    .sp-title { font-size: 11px; color: var(--muted); font-weight: 650; margin-bottom: 6px; }
+    .sp-hint { font-weight: 400; opacity: .8; }
+    .sp-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .sp-item { font-size: 11.5px; color: #aec2ff; background: rgba(91,134,255,.10);
+      border: 1px solid rgba(91,134,255,.28); border-radius: 7px; padding: 3px 8px; word-break: break-all; }
+    a.sp-item.dl { text-decoration: none; cursor: pointer; transition: background .12s, border-color .12s; }
+    a.sp-item.dl:hover { background: rgba(91,134,255,.22); border-color: var(--accent); }
+    a.sp-item.dl .dl-ic { opacity: .7; }
+
+    /* 피드백 (F-3) */
+    .fb-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .fb-btn { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+      padding: 3px 9px; cursor: pointer; font-size: 14px; line-height: 1; transition: border-color .12s, background .12s; }
+    .fb-btn:hover { border-color: var(--accent); }
+    .fb-btn.active { background: rgba(91,134,255,.16); border-color: var(--accent); }
+    .fb-msg { font-size: 11.5px; color: var(--muted); }
+    .fb-comment { display: flex; gap: 6px; margin-top: 8px; width: 100%; flex-basis: 100%; }
+    .fb-comment textarea { flex: 1; min-height: 48px; resize: vertical; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--panel); color: var(--text); padding: 7px 9px; font-size: 13px; }
+    .fb-send { align-self: flex-end; background: var(--accent); color: #fff; border: none;
+      border-radius: 8px; padding: 7px 12px; cursor: pointer; font-size: 13px; }
+
+    /* 입력 영역 */
+    .composer-wrap { padding: 14px 16px 20px; background: linear-gradient(180deg, transparent, var(--bg) 40%); border-top: none; }
+    .input-row {
+      border-radius: 16px; padding: 9px 9px 9px 16px; background: var(--panel);
+      border: 1px solid var(--border); box-shadow: var(--shadow); transition: border-color .15s, box-shadow .15s;
+    }
+    .input-row:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,134,255,.16), var(--shadow); }
+    textarea { font-size: 14.5px; }
+    select.source-select {
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 11px; height: 40px;
+      max-width: 200px; color: var(--text); font-size: 12.5px; font-weight: 500;
+    }
+    select.source-select:focus { border-color: var(--accent); }
+    button.send {
+      border-radius: 11px; height: 40px; padding: 0 20px; font-weight: 650;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      box-shadow: 0 3px 12px rgba(63,102,240,.35); transition: all .15s;
+    }
+    button.send:hover { transform: translateY(-1px); box-shadow: 0 5px 16px rgba(63,102,240,.5); background: linear-gradient(135deg, #6b92ff, #4a70f5); }
+    button.send.stop { background: linear-gradient(135deg, #f05252, #d83b3b); box-shadow: 0 3px 12px rgba(240,82,82,.35); }
+    .hint kbd { background: var(--panel-2); border-color: var(--border); }
+    .hint { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
+    .dev-toggle {
+      display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px;
+      padding: 4px 11px 4px 9px; color: #c0cad9; font-size: 11.5px; transition: all .15s;
+    }
+    .dev-toggle:hover { border-color: var(--accent); color: #fff; }
+    .dev-toggle input { accent-color: var(--accent); width: 13px; height: 13px; margin: 0; cursor: pointer; }
+    .dev-toggle.on { background: rgba(91,134,255,.15); border-color: rgba(91,134,255,.5); color: #cfdcff; }
+
+    /* 빈 화면 */
+    .empty h2 { font-size: 22px; font-weight: 750; letter-spacing: -.4px;
+      background: linear-gradient(135deg, #fff, #aec2ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .empty { max-width: 520px; }
+    .example { border-radius: 12px; padding: 13px 16px; transition: all .15s; }
+    .example:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+
+    /* 이력 서랍 */
+    .drawer { box-shadow: 0 0 40px rgba(0,0,0,.5); width: 340px; }
+    .drawer-head h3 { font-weight: 700; }
+    .hist-item { border-radius: 11px; }
+    .hist-item.active { border-color: rgba(91,134,255,.5); background: rgba(91,134,255,.1); }
+    .hist-title { font-size: 13px; }
+
+    /* 스크롤바 */
+    *::-webkit-scrollbar { width: 10px; height: 10px; }
+    *::-webkit-scrollbar-track { background: transparent; }
+    *::-webkit-scrollbar-thumb { background: #232c3a; border-radius: 8px; border: 2px solid var(--bg); }
+    *::-webkit-scrollbar-thumb:hover { background: #303c4f; }
+
+    @media (max-width: 640px) {
+      header h1 { font-size: 14px; }
+      header .sub { display: none; }
+      select.source-select { max-width: 130px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="dot"></span>
+    <h1>업무 문서 Q&A</h1>
+    <span class="sub">127.0.0.1 · 로컬 전용</span>
+    <button class="hbtn" id="histBtn">🕘 이력</button>
+    <button class="hbtn" id="newBtn">＋ 새 대화</button>
+    <a class="manage" href="/sources">＋ 폴더 등록</a>
+  </header>
+
+  <div class="drawer-overlay" id="drawerOverlay"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <h3>대화 이력</h3>
+      <button class="close" id="drawerClose" title="닫기">×</button>
+    </div>
+    <div class="hist-list" id="histList">
+      <div class="hist-empty">불러오는 중…</div>
+    </div>
+  </aside>
+
+  <div id="log">
+    <div class="empty" id="empty">
+      <h2>무엇이든 물어보세요</h2>
+      <div>질문할 폴더는 입력창 오른쪽 드롭다운에서 선택합니다.<br/>
+      폴더와 분기는 <a href="/sources" style="color:var(--accent)">＋ 폴더 등록</a>에서 관리할 수 있습니다.</div>
+      <div class="examples">
+        <div class="example">수강신청 정원 초과는 어느 테이블에서 처리하나요?</div>
+        <div class="example">성적 확정 후 정정은 어떻게 처리해야 하나요?</div>
+        <div class="example">등록금 가상계좌 입금 대사에서 주의할 점은?</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer-wrap">
+    <div class="composer">
+      <div class="input-row">
+        <textarea id="q" rows="1" placeholder="질문을 입력하세요…"></textarea>
+        <select class="source-select" id="sourceSelect" title="질의할 폴더 선택">
+          <option value="">폴더 불러오는 중…</option>
+        </select>
+        <button class="send" id="send">전송</button>
+      </div>
+      <div class="hint">
+        <label class="dev-toggle" id="devToggle" title="개발자 관점(테이블·컬럼·프로시저)을 답변에 포함">
+          <input type="checkbox" id="devView" /> 개발자 관점
+        </label>
+        <span><kbd>Enter</kbd> 전송 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 줄바꿈 · <kbd>Esc</kbd> 생성 중지</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const APP_TOKEN = "__APP_TOKEN__";
+    let sessionId = null;
+    let controller = null;     // 진행 중 요청의 AbortController
+    let streaming = false;
+    let currentStreamId = null; // 진행 중 스트림의 취소 id
+
+    const logEl = document.getElementById("log");
+    const qEl = document.getElementById("q");
+    const btn = document.getElementById("send");
+    const emptyEl = document.getElementById("empty");
+    const sourceSelect = document.getElementById("sourceSelect");
+    let sources = [];
+
+    // ---- 안전한 경량 마크다운 렌더 (HTML 이스케이프 후 최소 서식만) ----
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+    function inline(s) {
+      s = escapeHtml(s);
+      s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+      s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      return s;
+    }
+    function renderMarkdown(text) {
+      const lines = text.split("\n");
+      let html = "", inList = false, i = 0;
+      const closeList = () => { if (inList) { html += "</ul>"; inList = false; } };
+      const isTableRow = (l) => /^\s*\|(.+)\|\s*$/.test(l);
+      const isSep = (l) => /^\s*\|?[\s:|\-]+\|?\s*$/.test(l) && l.includes("-");
+      const parseRow = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+
+      while (i < lines.length) {
+        const raw = lines[i];
+
+        // 1) 코드블록 (```)
+        const fence = raw.match(/^\s*```(\w*)\s*$/);
+        if (fence) {
+          closeList();
+          const code = [];
+          i++;
+          while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) { code.push(lines[i]); i++; }
+          i++; // 닫는 펜스 건너뜀
+          html += '<pre><code>' + escapeHtml(code.join("\n")) + '</code></pre>';
+          continue;
+        }
+
+        // 2) 표 (헤더행 + 구분행)
+        if (isTableRow(raw) && i + 1 < lines.length && isSep(lines[i + 1])) {
+          closeList();
+          const headers = parseRow(raw);
+          i += 2;
+          const rows = [];
+          while (i < lines.length && isTableRow(lines[i])) { rows.push(parseRow(lines[i])); i++; }
+          let t = '<div class="tbl-wrap"><table><thead><tr>' +
+            headers.map(h => "<th>" + inline(h) + "</th>").join("") + "</tr></thead><tbody>";
+          rows.forEach(r => { t += "<tr>" + r.map(c => "<td>" + inline(c) + "</td>").join("") + "</tr>"; });
+          t += "</tbody></table></div>";
+          html += t;
+          continue;
+        }
+
+        // 3) 일반 라인
+        const line = raw.trimEnd();
+        let m;
+        if ((m = line.match(/^###\s+(.*)/))) { closeList(); html += "<h4>" + inline(m[1]) + "</h4>"; }
+        else if ((m = line.match(/^##\s+(.*)/))) { closeList(); html += "<h3>" + inline(m[1]) + "</h3>"; }
+        else if ((m = line.match(/^#\s+(.*)/))) { closeList(); html += "<h3>" + inline(m[1]) + "</h3>"; }
+        else if ((m = line.match(/^\s*[-*]\s+(.*)/))) { if (!inList) { html += "<ul>"; inList = true; } html += "<li>" + inline(m[1]) + "</li>"; }
+        else if (line.trim() === "") { closeList(); }
+        else { closeList(); html += "<p>" + inline(line) + "</p>"; }
+        i++;
+      }
+      closeList();
+      return html;
+    }
+
+    function newTurn(role) {
+      const turn = document.createElement("div");
+      turn.className = "turn " + role;
+      const rlabel = document.createElement("div");
+      rlabel.className = "role";
+      rlabel.textContent = role === "user" ? "나" : "도우미";
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      turn.appendChild(rlabel);
+      turn.appendChild(bubble);
+      logEl.appendChild(turn);
+      logEl.scrollTop = logEl.scrollHeight;
+      return { turn, bubble };
+    }
+
+    // 선택값 없이 물었을 때: 어느 폴더에 물을지 칩으로 되묻는다.
+    function renderNeedsSource(bubble, question, sources) {
+      bubble.innerHTML = "";
+      const p = document.createElement("p");
+      if (!sources.length) {
+        p.innerHTML = '등록된 폴더가 없습니다. 먼저 <a href="/sources" style="color:var(--accent)">＋ 폴더 등록</a>에서 추가해주세요.';
+        bubble.appendChild(p);
+        return;
+      }
+      p.textContent = "어느 폴더에서 찾을까요? 아래에서 고르면 그 폴더로 다시 질문합니다.";
+      bubble.appendChild(p);
+      const box = document.createElement("div");
+      box.className = "ask-source";
+      sources.forEach(s => {
+        const chip = document.createElement("div");
+        chip.className = "src-chip";
+        chip.innerHTML = "<b>" + escapeHtml(s.division || "학사") + "</b> " + escapeHtml(s.label || "");
+        chip.addEventListener("click", () => {
+          sourceSelect.value = String(s.id || "");
+          qEl.value = question;
+          autoGrow();
+          send();
+        });
+        box.appendChild(chip);
+      });
+      bubble.appendChild(box);
+    }
+
+    function scrollDown() {
+      const nearBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 120;
+      if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // 답변 아래: 참고 문서 패널(F-1.4, 실제 포함 출처) + 피드백 바(F-3).
+    function renderAnswerExtras(turnObj, messageId, srcs) {
+      if (srcs && srcs.length) {
+        const panel = document.createElement("div");
+        panel.className = "sources-panel";
+        panel.innerHTML =
+          '<div class="sp-title">📎 참고 문서 <span class="sp-hint">(클릭하면 원본 다운로드)</span></div>' +
+          '<div class="sp-list">' +
+          srcs.map(s => {
+            const label = escapeHtml(s.title || s.path || "");
+            if (s.source && s.path) {
+              const href = "/api/source-file?source=" + encodeURIComponent(s.source) +
+                           "&path=" + encodeURIComponent(s.path);
+              return '<a class="sp-item dl" href="' + href + '" download title="다운로드">' +
+                     label + ' <span class="dl-ic">⬇</span></a>';
+            }
+            return '<span class="sp-item">' + label + '</span>';
+          }).join("") +
+          '</div>';
+        turnObj.turn.appendChild(panel);
+      }
+      if (!messageId) return;
+      const bar = document.createElement("div");
+      bar.className = "fb-bar";
+      bar.innerHTML =
+        '<button class="fb-btn" data-r="up" title="도움이 됐어요">👍</button>' +
+        '<button class="fb-btn" data-r="down" title="아쉬워요">👎</button>' +
+        '<span class="fb-msg"></span>';
+      const msgEl = bar.querySelector(".fb-msg");
+      let commentBox = null;
+      bar.querySelectorAll(".fb-btn").forEach(b => {
+        b.addEventListener("click", () => {
+          const rating = b.getAttribute("data-r");
+          bar.querySelectorAll(".fb-btn").forEach(x => x.classList.remove("active"));
+          b.classList.add("active");
+          if (rating === "down") {
+            if (commentBox) return;
+            commentBox = document.createElement("div");
+            commentBox.className = "fb-comment";
+            commentBox.innerHTML =
+              '<textarea maxlength="500" placeholder="무엇이 아쉬웠나요? (선택, 500자 이내)"></textarea>' +
+              '<button class="fb-send">보내기</button>';
+            bar.appendChild(commentBox);
+            commentBox.querySelector(".fb-send").addEventListener("click", () => {
+              const c = commentBox.querySelector("textarea").value.trim();
+              sendFeedback(messageId, "down", c, msgEl);
+              commentBox.remove(); commentBox = null;
+            });
+          } else {
+            sendFeedback(messageId, "up", "", msgEl);
+          }
+        });
+      });
+      turnObj.turn.appendChild(bar);
+    }
+
+    async function sendFeedback(messageId, rating, comment, msgEl) {
+      try {
+        const body = { message_id: messageId, rating };
+        if (comment) body.comment = comment;
+        const res = await fetch("/api/feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-App-Token": APP_TOKEN },
+          body: JSON.stringify(body),
+        });
+        if (msgEl) msgEl.textContent = res.ok ? "피드백 감사합니다." : "전송 실패";
+      } catch (_) {
+        if (msgEl) msgEl.textContent = "전송 실패";
+      }
+    }
+
+    function parseSSE(raw) {
+      let event = "message", data = null;
+      for (const line of raw.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data = line.slice(5).trim();
+      }
+      if (data === null) return null;
+      try { return { event, data: JSON.parse(data) }; } catch (_) { return null; }
+    }
+
+    function setStreaming(on) {
+      streaming = on;
+      btn.textContent = on ? "중지" : "전송";
+      btn.classList.toggle("stop", on);
+    }
+
+    function renderSourceOptions() {
+      if (!sources.length) {
+        sourceSelect.innerHTML = '<option value="">등록된 폴더 없음</option>';
+        return;
+      }
+      let html = "";
+      let lastDivision = null;
+      sources.forEach(s => {
+        const div = s.division || "학사";
+        if (div !== lastDivision) {
+          if (lastDivision !== null) html += "</optgroup>";
+          html += '<optgroup label="' + escapeHtml(div) + '">';
+          lastDivision = div;
+        }
+        html += '<option value="' + s.id + '">' + escapeHtml(s.label) + '</option>';
+      });
+      if (lastDivision !== null) html += "</optgroup>";
+      sourceSelect.innerHTML = html;
+    }
+
+    async function loadSources() {
+      try {
+        const res = await fetch("/api/sources");
+        const data = await res.json();
+        sources = (data.sources || []).filter(s => s.enabled);
+        renderSourceOptions();
+      } catch (_) {
+        sourceSelect.innerHTML = '<option value="">목록 오류</option>';
+      }
+    }
+
+    async function send() {
+      // 진행 중이면 send 버튼은 '중지'로 동작
+      if (streaming) { stop(); return; }
+      const question = qEl.value.trim();
+      if (!question) return;
+      if (emptyEl) emptyEl.remove();
+
+      newTurn("user").bubble.textContent = question;
+      qEl.value = ""; autoGrow();
+
+      const a = newTurn("assistant");
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      a.turn.appendChild(meta);
+      let statusEl = document.createElement("div");
+      statusEl.className = "status-line";
+      statusEl.innerHTML = '<span class="spinner"></span> 문서를 읽고 답변을 준비하는 중…';
+      a.bubble.appendChild(statusEl);
+
+      controller = new AbortController();
+      setStreaming(true);
+      let acc = "";
+      let aborted = false;
+      let doneMessageId = null;   // S-0: done 이벤트로 받는 답변 행 id
+      let doneSources = [];       // S-0: 실제 포함 출처(참고 문서 패널용)
+
+      try {
+        const selectedSourceId = parseInt(sourceSelect.value, 10);
+        const res = await fetch("/api/ask/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-App-Token": APP_TOKEN },
+          body: JSON.stringify({
+            question,
+            session_id: sessionId,
+            source_id: Number.isInteger(selectedSourceId) ? selectedSourceId : null,
+            dev_view: document.getElementById("devView").checked,
+          }),
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          a.bubble.innerHTML = "<p>⚠️ " + (d.error || "오류가 발생했습니다.") + "</p>";
+          return;
+        }
+        // 구분자 없음 → 서버가 SSE 대신 JSON(되묻기)으로 응답한다.
+        if ((res.headers.get("content-type") || "").includes("application/json")) {
+          const d = await res.json().catch(() => ({}));
+          if (statusEl) { statusEl.remove(); statusEl = null; }
+          if (d.needs_source) {
+            if (d.session_id) {
+              sessionId = d.session_id;
+              try { localStorage.setItem("sessionId", sessionId); } catch (_) {}
+            }
+            renderNeedsSource(a.bubble, question, d.sources || []);
+            return;
+          }
+          a.bubble.innerHTML = "<p>⚠️ " + (d.error || "오류가 발생했습니다.") + "</p>";
+          return;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        const render = () => {
+          a.bubble.innerHTML = renderMarkdown(acc) + '<span class="cursor"></span>';
+          scrollDown();
+        };
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
+            const ev = parseSSE(buf.slice(0, idx));
+            buf = buf.slice(idx + 2);
+            if (!ev) continue;
+            if (ev.event === "meta") {
+              currentStreamId = ev.data.stream_id || null;
+              meta.innerHTML =
+                '<span class="tag cat">' + (ev.data.category || "전체") + '</span>' +
+                (ev.data.files || []).map(f => '<span class="tag">' + escapeHtml(f) + '</span>').join("");
+            } else if (ev.event === "delta") {
+              if (statusEl) { statusEl.remove(); statusEl = null; }
+              acc += ev.data.text;
+              render();
+            } else if (ev.event === "error") {
+              acc += "\n\n⚠️ " + (ev.data.error || "오류");
+              render();
+            } else if (ev.event === "done") {
+              if (ev.data.session_id) {
+                sessionId = ev.data.session_id;
+                try { localStorage.setItem("sessionId", sessionId); } catch (_) {}
+              }
+              doneMessageId = ev.data.message_id || null;
+              doneSources = ev.data.sources || [];
+            }
+          }
+        }
+      } catch (e) {
+        if (e.name === "AbortError") { aborted = true; }
+        else { a.bubble.innerHTML = (acc ? renderMarkdown(acc) : "") + "<p>⚠️ 네트워크 오류가 발생했습니다.</p>"; }
+      } finally {
+        // 커서 제거 + 최종 렌더
+        a.bubble.innerHTML = acc ? renderMarkdown(acc) : a.bubble.innerHTML;
+        if (statusEl && acc === "") { a.bubble.innerHTML = ""; }
+        if (aborted) {
+          const note = document.createElement("div");
+          note.className = "status-line";
+          note.style.color = "var(--danger)";
+          note.textContent = "■ 사용자가 생성을 중지했습니다.";
+          a.bubble.appendChild(note);
+        } else if (acc) {
+          // 참고 문서 패널 + 피드백 바(완료된 답변에만).
+          renderAnswerExtras(a, doneMessageId, doneSources);
+        }
+        setStreaming(false);
+        controller = null;
+        currentStreamId = null;
+        qEl.focus();
+      }
+    }
+
+    function stop() {
+      // 1) 서버에 취소 알림 → CLI 프로세스 트리 종료 (실제 생성 중단)
+      if (currentStreamId) {
+        fetch("/api/ask/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-App-Token": APP_TOKEN },
+          body: JSON.stringify({ stream_id: currentStreamId }),
+          keepalive: true,
+        }).catch(() => {});
+      }
+      // 2) 브라우저 측 요청 중단 → UI 즉시 반응
+      if (controller) controller.abort();
+    }
+
+    // ---- 입력 동작 ----
+    function autoGrow() {
+      qEl.style.height = "auto";
+      qEl.style.height = Math.min(qEl.scrollHeight, 180) + "px";
+    }
+    qEl.addEventListener("input", autoGrow);
+
+    // Enter = 전송, Shift+Enter = 줄바꿈
+    qEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        send();
+      }
+    });
+
+    // Esc = 진행 중인 생성 중지 (전역)
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && streaming) {
+        e.preventDefault();
+        stop();
+      }
+    });
+
+    btn.addEventListener("click", send);
+    loadSources();
+
+    // 예시 클릭
+    document.querySelectorAll(".example").forEach(el => {
+      el.addEventListener("click", () => { qEl.value = el.textContent; autoGrow(); qEl.focus(); send(); });
+    });
+
+    // ===== 대화 이력 =====
+    const drawer = document.getElementById("drawer");
+    const drawerOverlay = document.getElementById("drawerOverlay");
+    const histListEl = document.getElementById("histList");
+
+    function openDrawer() { drawer.classList.add("open"); drawerOverlay.classList.add("open"); loadHistory(); }
+    function closeDrawer() { drawer.classList.remove("open"); drawerOverlay.classList.remove("open"); }
+
+    function appendMessage(role, content, files) {
+      const t = newTurn(role);
+      if (role === "user") {
+        t.bubble.textContent = content;
+      } else {
+        t.bubble.innerHTML = renderMarkdown(content || "");
+        if (files && files.length) {
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.innerHTML = files.map(f => '<span class="tag">' + escapeHtml(f) + '</span>').join("");
+          t.turn.appendChild(meta);
+        }
+      }
+    }
+
+    async function loadHistory() {
+      histListEl.innerHTML = '<div class="hist-empty">불러오는 중…</div>';
+      try {
+        const res = await fetch("/api/history");
+        const data = await res.json();
+        const rows = data.conversations || [];
+        if (!rows.length) { histListEl.innerHTML = '<div class="hist-empty">대화 이력이 없습니다.</div>'; return; }
+        histListEl.innerHTML = "";
+        rows.forEach(c => {
+          const item = document.createElement("div");
+          item.className = "hist-item" + (c.session_id === sessionId ? " active" : "");
+          item.innerHTML =
+            '<div class="hist-title">' + escapeHtml(c.title) + '</div>' +
+            '<div class="hist-meta">' + (c.count || 0) + '개 메시지</div>' +
+            '<button class="hist-del" title="삭제">✕</button>';
+          item.addEventListener("click", () => openConversation(c.session_id));
+          item.querySelector(".hist-del").addEventListener("click", (e) => {
+            e.stopPropagation(); deleteConversation(c.session_id);
+          });
+          histListEl.appendChild(item);
+        });
+      } catch (_) {
+        histListEl.innerHTML = '<div class="hist-empty">목록을 불러오지 못했습니다.</div>';
+      }
+    }
+
+    async function renderConversation(sid) {
+      const res = await fetch("/api/history/" + encodeURIComponent(sid));
+      const data = await res.json();
+      const msgs = data.messages || [];
+      logEl.innerHTML = "";
+      msgs.forEach(m => appendMessage(m.role, m.content, m.files));
+      logEl.scrollTop = logEl.scrollHeight;
+      return msgs.length;
+    }
+
+    async function openConversation(sid) {
+      try {
+        const n = await renderConversation(sid);
+        sessionId = sid;
+        try { localStorage.setItem("sessionId", sid); } catch (_) {}
+        if (!n) showEmpty("이 대화에는 메시지가 없습니다.");
+      } catch (_) {}
+      closeDrawer();
+      qEl.focus();
+    }
+
+    async function deleteConversation(sid) {
+      if (!confirm("이 대화를 삭제할까요?")) return;
+      try {
+        await fetch("/api/history/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-App-Token": APP_TOKEN },
+          body: JSON.stringify({ session_id: sid }),
+        });
+      } catch (_) {}
+      if (sid === sessionId) newConversation();
+      loadHistory();
+    }
+
+    function showEmpty(msg) {
+      logEl.innerHTML = "";
+      const d = document.createElement("div");
+      d.className = "empty";
+      d.innerHTML = "<h2>" + escapeHtml(msg || "새 대화") + "</h2>" +
+        "<div>질문할 폴더를 입력창 오른쪽 드롭다운에서 고르고 질문하세요.</div>";
+      logEl.appendChild(d);
+    }
+
+    function newConversation() {
+      sessionId = null;
+      try { localStorage.removeItem("sessionId"); } catch (_) {}
+      showEmpty("새 대화");
+      closeDrawer();
+      qEl.focus();
+    }
+
+    // 개발자 관점 토글 시각 상태 (기본 OFF) + 선택 기억
+    const devViewEl = document.getElementById("devView");
+    const devToggleEl = document.getElementById("devToggle");
+    try {
+      if (localStorage.getItem("devView") === "1") devViewEl.checked = true;
+    } catch (_) {}
+    const syncDevToggle = () => {
+      devToggleEl.classList.toggle("on", devViewEl.checked);
+      try { localStorage.setItem("devView", devViewEl.checked ? "1" : "0"); } catch (_) {}
+    };
+    devViewEl.addEventListener("change", syncDevToggle);
+    syncDevToggle();
+
+    document.getElementById("histBtn").addEventListener("click", openDrawer);
+    document.getElementById("newBtn").addEventListener("click", newConversation);
+    document.getElementById("drawerClose").addEventListener("click", closeDrawer);
+    drawerOverlay.addEventListener("click", closeDrawer);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && drawer.classList.contains("open")) closeDrawer();
+    });
+
+    // 새로고침 시 직전 대화 복원
+    (async function restore() {
+      let saved = null;
+      try { saved = localStorage.getItem("sessionId"); } catch (_) {}
+      if (!saved) return;
+      try {
+        const n = await renderConversation(saved);
+        if (n) { sessionId = saved; if (emptyEl) emptyEl.remove(); }
+      } catch (_) {}
+    })();
+
+    qEl.focus();
+  </script>
+</body>
+</html>
